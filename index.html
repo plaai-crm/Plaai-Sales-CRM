@@ -1,0 +1,1766 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Plaai Group — Sales Ops</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --brand:#0f3a52;         /* deep teal-navy */
+    --brand-2:#12546f;
+    --accent:#0e7490;        /* teal/cyan primary action */
+    --accent-2:#0891b2;
+    --pos:#0f766e;           /* teal-green (on hand / confirmed) */
+    --warn:#c2760c;          /* muted amber */
+    --danger:#be123c;        /* rose */
+    --ink:#0f2233;
+    --muted:#64748b;
+    --line:#e6ebf0;
+    --bg:#f4f7f9;
+  }
+  body { font-family: 'Inter','Segoe UI','Tahoma',sans-serif; color:#0f2233;
+         background: linear-gradient(180deg,#eaf0f4 0%, #f4f7f9 240px, #f4f7f9 100%); }
+  .modal-backdrop { background: rgba(10,28,45,0.55); backdrop-filter: blur(2px); }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+
+  .tab-pill { transition: all .15s ease; }
+  .tab-pill.active { background:#ffffff; color:var(--brand); font-weight:700; box-shadow:0 1px 3px rgba(15,58,82,0.18); }
+  .tab-pill:not(.active) { color:#64748b; }
+  .tab-pill:not(.active):hover { color:var(--brand); }
+
+  .badge { display:inline-block; padding:2px 10px; border-radius:9999px; font-size:11px; font-weight:600; }
+  .card { background:#fff; border-radius:16px; box-shadow:0 1px 2px rgba(15,23,42,0.05),0 1px 10px rgba(15,23,42,0.04); border:1px solid #eef2f6; }
+  .card:hover { box-shadow:0 4px 16px rgba(15,23,42,0.07); }
+  .kpi { border-radius:16px; padding:16px 18px; color:#fff; box-shadow:0 6px 18px rgba(15,58,82,0.14); }
+  .kpi .lbl{ font-size:11px; opacity:.85; letter-spacing:.02em; }
+  .kpi .num{ font-size:24px; font-weight:800; margin-top:4px; line-height:1.1; }
+  .kpi .sub{ font-size:11px; opacity:.82; margin-top:4px; }
+
+  .btn { border-radius:10px; font-weight:600; transition: all .15s ease; }
+  .btn:hover { transform: translateY(-1px); }
+  .btn-primary{ background:var(--accent); color:#fff; box-shadow:0 2px 8px rgba(14,116,144,0.25); }
+  .btn-primary:hover{ background:#0c6a86; }
+  .btn-ghost{ background:#fff; border:1px solid var(--line); color:var(--ink); }
+  .btn-ghost:hover{ border-color:#cbd5e1; }
+
+  /* clean unified quick-add buttons: white chip + colored icon */
+  .qbtn{ display:inline-flex; align-items:center; gap:8px; background:#fff; border:1px solid var(--line);
+         border-radius:11px; padding:8px 13px; font-size:13px; font-weight:600; color:var(--ink);
+         transition:all .15s ease; box-shadow:0 1px 2px rgba(15,23,42,0.05); }
+  .qbtn:hover{ transform:translateY(-1px); border-color:#cbd5e1; box-shadow:0 4px 10px rgba(15,23,42,0.09); }
+  .qico{ width:22px; height:22px; border-radius:7px; display:inline-flex; align-items:center; justify-content:center;
+         color:#fff; font-size:14px; font-weight:700; }
+
+  select.pill-select { border:0; cursor:pointer; -webkit-appearance:none; appearance:none; padding-right:20px;
+        background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'><path d='M2 3.5L5 6.5L8 3.5' stroke='%23475569' stroke-width='1.4' fill='none' stroke-linecap='round'/></svg>");
+        background-repeat:no-repeat; background-position:right 6px center; }
+  select.pill-select:focus { outline: 2px solid #7dd3fc; }
+  .fc-input{ width:110px; border:1px solid var(--line); border-radius:8px; padding:4px 8px; font-size:13px; text-align:right; }
+  .fc-input:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 2px rgba(14,116,144,0.15); }
+  table th { font-weight:600; letter-spacing:.02em; }
+  tbody tr:hover { background:#f8fafc; }
+  .link-tag{ display:inline-block; font-size:10px; font-weight:700; color:var(--pos);
+             background:#e6f6f2; border-radius:6px; padding:1px 6px; margin-left:6px; white-space:nowrap; }
+  .progress-track{ height:10px; border-radius:9999px; background:#e5edf2; overflow:hidden; }
+  .progress-fill{ height:100%; border-radius:9999px; background:linear-gradient(90deg,var(--accent),var(--pos)); }
+  .stage-bar{ height:8px; border-radius:9999px; background:#eef2f6; overflow:hidden; }
+  .section-title{ font-weight:700; color:#1e2a3a; }
+  /* solid, clearly-visible quick-add buttons */
+  .qbtn-solid{ display:inline-flex; align-items:center; gap:7px; color:#fff; border:0; border-radius:11px;
+        padding:9px 15px; font-size:13px; font-weight:700; cursor:pointer;
+        box-shadow:0 2px 6px rgba(15,23,42,0.20); transition:all .15s ease; }
+  .qbtn-solid:hover{ transform:translateY(-1px); filter:brightness(1.08); box-shadow:0 5px 14px rgba(15,23,42,0.26); }
+  .qbtn-solid .qi{ font-size:15px; font-weight:800; line-height:1; }
+
+  /* โหมดดูอย่างเดียว (View only): ซ่อนปุ่มเพิ่ม/แก้ไข/ลบ ทั้งหมด ผู้ใช้ยังเลื่อนดู/สลับแท็บ/เลือกปีได้ */
+  body.readonly [onclick*="Modal("],
+  body.readonly [onclick^="delete"],
+  body.readonly [onclick^="quickLogFor"],
+  body.readonly [onclick^="addYear"],
+  body.readonly .ro-hide,
+  body.readonly .qbtn-solid { display:none !important; }
+</style>
+</head>
+<body class="min-h-screen">
+<div id="app"></div>
+
+<script>
+/* =========================================================
+   PLAAI GROUP — SALES OPS  (client-side prototype)
+   Redesign: easier sales workflow, two-bucket forecast
+   (Pipeline + Function), results-only executive view,
+   and everything auto-linked to On Hand.
+   Data persists in this browser via localStorage.
+   ========================================================= */
+
+const STORAGE_KEY = "plaai_sales_ops_v3";
+
+/* =========================================================
+   CLOUD (Supabase) CONFIG
+   ใส่ค่า 2 อย่างจากโปรเจกต์ Supabase ของคุณด้านล่างนี้:
+   1) SUPABASE_URL      = Project URL   (Settings > API)
+   2) SUPABASE_ANON_KEY = anon public key (Settings > API)
+   ถ้าเว้นว่างไว้ แอปจะทำงานแบบออฟไลน์ (localStorage) เหมือนเดิม
+   ========================================================= */
+const SUPABASE_URL = "https://diffxgsxmztvccebgnol.supabase.co";// <-- วาง Project URL ที่นี่
+const SUPABASE_ANON_KEY = "sb_publishable_m9ntF4MgZrk7wbIcXUL5rw_wUQEvWOT";  // <-- วาง anon public key ที่นี่
+const CLOUD = !!(SUPABASE_URL && SUPABASE_ANON_KEY);
+
+/* รายชื่ออีเมลที่ "แก้ไขข้อมูลได้"
+   - ใส่อีเมลของฝ่ายขาย/ฝ่ายบัญชี/ผู้ดูแล ที่ต้องแก้ข้อมูล
+   - คนที่ล็อกอินด้วยอีเมลนอกรายการนี้ = เข้าดูได้อย่างเดียว (View only)
+   - ถ้าเว้นว่าง [] = ทุกคนที่ล็อกอินแก้ได้ (ไม่จำกัด)                */
+const EDITOR_EMAILS = [
+  "finance@p-plaai.com",
+  "sales1.plaaihotel@p-plaai.com",
+  "kunnsiri@gmail.com"
+   "rda.plaai@gmail.com",
+];
+
+/* URL ของ Supabase Edge Function สำหรับส่งสรุปเข้า LINE (ดูคู่มือ LINE)
+   - ถ้าใส่ไว้ ปุ่ม “ส่งเข้า LINE เลย” จะทำงานได้
+   - ถ้าเว้นว่าง ยังใช้ปุ่มคัดลอก/ดาวน์โหลดข้อความสรุปได้ตามปกติ           */
+const LINE_SUMMARY_FUNCTION_URL = ""; // เช่น "https://xxxx.functions.supabase.co/weekly-line-summary"
+
+let sb = null;                 // Supabase client
+let currentUser = null;        // ผู้ใช้ที่ล็อกอินอยู่
+let applyingRemote = false;    // กันบันทึกซ้ำเมื่อรับข้อมูลจากคนอื่น
+let cloudSaveTimer = null;     // debounce การบันทึกขึ้นคลาวด์
+let cloudSnapshot = null;      // สำเนา db ที่ตรงกับคลาวด์ล่าสุด (ใช้หา “อะไรเปลี่ยน”)
+let pendingRemoteRender = false; // มีอัปเดตจากทีมค้างอยู่ รอผู้ใช้พิมพ์เสร็จค่อยรีเฟรช
+const CLIENT_ID = Math.random().toString(36).slice(2); // ระบุว่า update นี้มาจากเครื่องเรา
+// ทุกคอลเลกชันที่ซิงค์ (แต่ละ “รายการ” มี id ของตัวเอง → บันทึกแยกกันได้ ไม่ทับกัน)
+const CLOUD_COLLECTIONS = ["hotels","salesReps","accounts","pipeline","functionEvents","activities","forecasts","revenue"];
+if (CLOUD && window.supabase) sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// สิทธิ์แก้ไข: ออฟไลน์แก้ได้เสมอ / ออนไลน์ดูจากรายชื่อ EDITOR_EMAILS
+function canEdit(){
+  if(!CLOUD) return true;
+  if(!EDITOR_EMAILS || EDITOR_EMAILS.length===0) return true;
+  const em = (currentUser && currentUser.email || "").toLowerCase();
+  return EDITOR_EMAILS.map(e=>e.toLowerCase()).includes(em);
+}
+function readOnly(){ return CLOUD && !canEdit(); }
+function roDisabled(){ return readOnly() ? "disabled" : ""; }
+// ผู้ใช้กำลังพิมพ์/เปิดหน้าต่างกรอกข้อมูลอยู่ไหม (จะได้ไม่รีเฟรชทับ)
+function isUserBusy(){
+  if(document.getElementById("modalForm")) return true;
+  const a = document.activeElement;
+  return !!(a && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName));
+}
+function guardEdit(){ if(readOnly()){ alert("โหมดดูอย่างเดียว — บัญชีนี้ไม่มีสิทธิ์แก้ไขข้อมูล"); return false; } return true; }
+const DEFAULT_ANNUAL_TARGET = 200000000; // 200 ล้านบาท/ปี (ค่าเริ่มต้น แก้ไขได้ต่อปี)
+function targetFor(year){ return (db.targets && db.targets[year]!=null) ? Number(db.targets[year]) : DEFAULT_ANNUAL_TARGET; }
+
+const DEFAULT_HOTELS = [
+  { id:"prime",  name:"Plaai Prime",       sub:"ห้องอาหาร • อาหารเช้า • บาร์ • ห้องประชุม/Function", accent:"#0e7490",
+    features:{ functionRoom:true, otaOnly:false } },
+  { id:"saroch", name:"Plaai Plus สาโรช",   sub:"ห้องอาหาร • ห้องประชุม/Function", accent:"#0f766e",
+    features:{ functionRoom:true, otaOnly:false } },
+  { id:"play",   name:"Plaai Play",         sub:"ห้องอาหาร • อาหารเช้า • บาร์ • ห้องประชุม/Function", accent:"#155e75",
+    features:{ functionRoom:true, otaOnly:false } },
+  { id:"bowin",  name:"Plaai Plus บ่อวิน",   sub:"ห้องอาหาร • อาหารเช้า • บาร์ • ห้องประชุม/Function", accent:"#0369a1",
+    features:{ functionRoom:true, otaOnly:false } },
+  { id:"bowin2", name:"Plaai Plus บ่อวิน2",  sub:"ห้องอาหาร • อาหารเช้า • บาร์ • ห้องประชุม/Function", accent:"#334155",
+    features:{ functionRoom:true, otaOnly:false } },
+];
+
+const DEFAULT_SALES_REPS = [
+  { id:"s1", name:"เซลล์ 1" },
+  { id:"s2", name:"เซลล์ 2" },
+  { id:"s3", name:"เซลล์ 3" },
+];
+
+// HOTELS / SALES_REPS now point at the persisted arrays in `db`
+// (populated by normalizeData -> syncLookups), so they can be added,
+// edited, and deleted by the user and survive reloads via localStorage.
+let HOTELS = DEFAULT_HOTELS.slice();
+let SALES_REPS = DEFAULT_SALES_REPS.slice();
+
+const ACTIVITY_TYPES = {
+  call:"โทร/ติดต่อลูกค้า", visit:"เข้าพบลูกค้า", site:"พาลูกค้าดูสถานที่ (Site Inspection)",
+  quote:"ส่งใบเสนอราคา", followup:"ติดตามงาน", beo:"จัดทำ/ส่ง BEO", other:"อื่น ๆ"
+};
+const PIPELINE_STAGES = { lead:"Lead", quoted:"Quoted", negotiation:"Negotiation", won:"ปิดได้แน่นอน (Won)", lost:"Lost" };
+const FUNCTION_STATUS = { inquiry:"Inquiry", quoted:"Quoted", confirmed:"ยืนยันแล้ว (Confirmed)", beo_sent:"BEO Sent", completed:"Completed", cancelled:"Cancelled" };
+const ACCOUNT_STATUS = { new:"New", active:"Active", dormant:"Dormant" };
+const THAI_MONTHS = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
+
+// statuses that count as "On Hand" (ยืนยัน/ปิดได้แล้ว)
+const ONHAND_FN_STATUS = ["confirmed","beo_sent","completed"];
+
+const STAGE_COLOR = { lead:"bg-slate-200 text-slate-700", quoted:"bg-amber-100 text-amber-700", negotiation:"bg-sky-100 text-sky-800", won:"bg-teal-100 text-teal-800", lost:"bg-rose-100 text-rose-700" };
+const FUNCTION_COLOR = { inquiry:"bg-slate-200 text-slate-700", quoted:"bg-amber-100 text-amber-700", confirmed:"bg-teal-100 text-teal-800", beo_sent:"bg-cyan-100 text-cyan-800", completed:"bg-emerald-100 text-emerald-700", cancelled:"bg-rose-100 text-rose-700" };
+const ACCOUNT_COLOR = { active:"bg-teal-100 text-teal-800", new:"bg-sky-100 text-sky-800", dormant:"bg-rose-100 text-rose-700" };
+const STAGE_ACCENT = { lead:"#94a3b8", quoted:"#c2760c", negotiation:"#0284c7", won:"#0f766e" };
+
+// ---- Total revenue by channel (for Owner view) ----
+const REVENUE_CHANNELS = { ota:"OTA", fit:"FIT", walkin:"Walk-in", sales:"Corporate", other:"อื่นๆ" };
+const REVENUE_CH_KEYS = ["ota","fit","walkin","sales","other"];
+const REVENUE_CH_COLOR = { ota:"#0369a1", fit:"#0891b2", walkin:"#0d9488", sales:"#0e7490", other:"#94a3b8" };
+
+function uid(p){ return p + "_" + Math.random().toString(36).slice(2,9); }
+function realToday(){ return new Date().toISOString().slice(0,10); }
+// "today" auto-follows the real date, but can be overridden from the top bar (ui.today)
+function todayStr(){ return (typeof ui!=="undefined" && ui && ui.today) ? ui.today : realToday(); }
+function fmtMoney(n){ return "฿" + Number(n||0).toLocaleString("th-TH"); }
+function fmtM(n){ n=Number(n)||0; const a=Math.abs(n);
+  if(a>=1e6) return (n<0?"-":"")+"฿"+(a/1e6).toFixed(a>=1e7?0:1)+" ล.";
+  if(a>=1e3) return (n<0?"-":"")+"฿"+Math.round(a/1e3)+"K";
+  return "฿"+n.toLocaleString("th-TH"); }
+function daysDiff(dateStr){ const d=new Date(dateStr), t=new Date(todayStr()); return Math.round((d-t)/86400000); }
+function ymKey(dateStr){ return (dateStr||"").slice(0,7); }
+function currentMonthKey(){ return todayStr().slice(0,7); }
+function addMonthsKey(key,n){ let [y,m]=key.split("-").map(Number); m+=n; while(m>12){m-=12;y+=1;} while(m<1){m+=12;y-=1;} return y+"-"+String(m).padStart(2,"0"); }
+function monthLabel(key){ const [y,m]=key.split("-").map(Number); return THAI_MONTHS[m-1]+" "+(y+543); }
+function next6Months(){ const arr=[]; let k=currentMonthKey(); for(let i=0;i<6;i++){ arr.push(k); k=addMonthsKey(k,1);} return arr; }
+
+// สร้างข้อมูลยอดขายตัวอย่าง (ปีนี้ถึงเดือนปัจจุบัน + ทั้งปีที่แล้ว) เพื่อให้หน้าเจ้าของมีกราฟให้ดูทันที
+function genSampleRevenue(hotels, cy){
+  const rows = [];
+  const season = [0.9,0.95,1.05,1.0,0.95,0.9,0.92,0.98,1.0,1.1,1.15,1.2]; // ปัจจัยตามเดือน
+  const nowM = Number(todayStr().slice(5,7));
+  hotels.forEach((h,hi)=>{
+    const base = 900000 + hi*250000;           // ฐานยอด/เดือน ต่างกันตามโรงแรม
+    const mix  = [0.30,0.18,0.14,0.28,0.10];    // สัดส่วน OTA/FIT/Walkin/ฝ่ายขาย/อื่นๆ
+    const build = (year, month, growth)=>{
+      const tot = Math.round(base*season[month-1]*growth/1000)*1000;
+      const e = { id:uid("rev"), hotelId:h.id, month:year+"-"+String(month).padStart(2,"0") };
+      REVENUE_CH_KEYS.forEach((k,i)=>{ e[k] = Math.round(tot*mix[i]/1000)*1000; });
+      return e;
+    };
+    for(let m=1;m<=12;m++) rows.push(build(cy-1, m, 1.0));            // ปีที่แล้ว ครบ 12 เดือน
+    for(let m=1;m<=nowM;m++) rows.push(build(cy, m, 1.08+hi*0.01));   // ปีนี้ ถึงเดือนปัจจุบัน (โต ~8-13%)
+  });
+  return rows;
+}
+
+function defaultData(){
+  const t = todayStr();
+  const plus = (n)=>{ const d=new Date(); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); };
+  const minus = (n)=>plus(-n);
+  const nm = addMonthsKey(currentMonthKey(),1);
+  return {
+    hotels: DEFAULT_HOTELS.map(h=>({ ...h, features:{ ...h.features } })),
+    salesReps: DEFAULT_SALES_REPS.map(s=>({ ...s })),
+    accounts:[
+      { id:uid("acc"), name:"บริษัท ตัวอย่าง จำกัด (ลบได้)", hotelIds:["prime"], salesId:"s1", status:"active", roomNightsMTD:42, contractRate:1200, lastContactDate:minus(5), contactPerson:"คุณสมชาย ใจดี", phone:"081-234-5678", lastContactTopic:"ติดตามยอดจอง Q3 และขอราคาห้องพักปีหน้า" },
+      { id:uid("acc"), name:"บจก. ตัวอย่างสอง (ลบได้)", hotelIds:["saroch"], salesId:"s2", status:"new", roomNightsMTD:8, contractRate:1000, lastContactDate:minus(2), contactPerson:"คุณสมหญิง มีสุข", phone:"089-876-5432", lastContactTopic:"แนะนำห้องประชุมสำหรับงานสัมมนาเดือนหน้า" },
+    ],
+    pipeline:[
+      { id:uid("pl"), hotelId:"prime", accountName:"บริษัท ตัวอย่าง จำกัด (ลบได้)", dealType:"corporate_room", estValue:180000, stage:"negotiation", expectedCloseDate:plus(20), salesId:"s1" },
+      { id:uid("pl"), hotelId:"saroch", accountName:"งานสัมมนา ตัวอย่าง (ลบได้)", dealType:"function", estValue:65000, stage:"quoted", expectedCloseDate:plus(10), salesId:"s2" },
+    ],
+    functionEvents:[
+      { id:uid("fn"), hotelId:"prime", clientName:"งานเลี้ยงบริษัท ตัวอย่าง (ลบได้)", eventDate:plus(3), eventType:"งานเลี้ยงประจำปี", paxCount:80, estRevenue:95000, status:"confirmed", salesId:"s1", beoSentDate:"" },
+      { id:uid("fn"), hotelId:"saroch", clientName:"งานสัมมนา ตัวอย่างสอง (ลบได้)", eventDate:plus(1), eventType:"สัมมนา 1 วัน", paxCount:40, estRevenue:38000, status:"beo_sent", salesId:"s2", beoSentDate:t },
+    ],
+    activities:[
+      { id:uid("act"), date:t, salesId:"s1", hotelId:"prime", type:"call", accountName:"บริษัท ตัวอย่าง จำกัด (ลบได้)", notes:"ติดตามยอดจอง Q3" },
+      { id:uid("act"), date:minus(1), salesId:"s2", hotelId:"saroch", type:"site", accountName:"งานสัมมนา ตัวอย่างสอง (ลบได้)", notes:"พาลูกค้าดูห้องประชุม" },
+    ],
+    forecasts:[
+      { id:uid("fc"), hotelId:"prime", month:nm, pipelineForecast:320000, functionForecast:120000, notes:"ประเมินจาก Pipeline + งาน Function ที่คาดว่าจะปิด" },
+    ],
+    revenue: genSampleRevenue(DEFAULT_HOTELS, new Date().getFullYear()),
+    years:[ new Date().getFullYear() ],
+    targets:{}
+  };
+}
+
+let db = null;
+function loadData(){
+  try{ const raw=localStorage.getItem(STORAGE_KEY); if(raw){ db=JSON.parse(raw); normalizeData(); return; } }catch(e){}
+  db = defaultData(); normalizeData(); saveData();
+}
+// keep the global HOTELS / SALES_REPS pointing at the persisted arrays
+function syncLookups(){ HOTELS = db.hotels; SALES_REPS = db.salesReps; }
+function normalizeData(){
+  // hotels & sales reps are now persisted; fall back to defaults for old saves
+  db.hotels = (db.hotels && db.hotels.length) ? db.hotels.map(h=>({ features:{ functionRoom:true, otaOnly:false }, accent:"#0e7490", sub:"", ...h, features:{ functionRoom:true, otaOnly:false, ...(h.features||{}) } })) : DEFAULT_HOTELS.map(h=>({ ...h, features:{ ...h.features } }));
+  db.salesReps = (db.salesReps && db.salesReps.length) ? db.salesReps : DEFAULT_SALES_REPS.map(s=>({ ...s }));
+  syncLookups();
+  db.accounts = (db.accounts||[]).map(a=>({ contactPerson:"", phone:"", lastContactTopic:"", ...a }));
+  db.pipeline = db.pipeline||[]; db.functionEvents = db.functionEvents||[]; db.activities = db.activities||[];
+  db.forecasts = (db.forecasts||[]).map(f=>{
+    // migrate old single-value forecast -> two-bucket
+    if (f.pipelineForecast===undefined && f.functionForecast===undefined){
+      return { id:f.id, hotelId:f.hotelId, month:f.month,
+               pipelineForecast:Number(f.forecastValue)||0, functionForecast:0, notes:f.notes||"" };
+    }
+    return { pipelineForecast:0, functionForecast:0, notes:"", ...f };
+  });
+  // ยอดขายรวมรายเดือน (5 ช่องทาง) สำหรับหน้าเจ้าของ
+  db.revenue = (db.revenue||[]).map(r=>({ ota:0, fit:0, walkin:0, sales:0, other:0, ...r }));
+  const cy = new Date().getFullYear();
+  db.years = (db.years && db.years.length) ? db.years : [cy];
+  if(!db.years.includes(cy)) db.years.push(cy);
+  db.years = db.years.map(Number).sort((a,b)=>a-b);
+  db.targets = db.targets || {};
+}
+function saveData(){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(db));       // แคชในเครื่องเสมอ
+  if (CLOUD && !applyingRemote && !readOnly()) cloudSyncChanges(); // ซิงค์เฉพาะ “รายการที่เปลี่ยน” ขึ้นคลาวด์
+}
+
+// ---- ซิงค์แบบแยกรายการ: หา “อะไรเปลี่ยน” เทียบ snapshot แล้วส่งเฉพาะรายการนั้น ----
+function cloudSyncChanges(){
+  if(!sb || !currentUser) return;
+  clearTimeout(cloudSaveTimer);
+  cloudSaveTimer = setTimeout(async ()=>{
+    try{
+      const rows = [];
+      for(const col of CLOUD_COLLECTIONS){
+        const cur = db[col] || [], prev = (cloudSnapshot && cloudSnapshot[col]) || [];
+        const curMap = new Map(cur.map(x=>[x.id,x]));
+        const prevMap = new Map(prev.map(x=>[x.id,x]));
+        // เพิ่ม/แก้ไข
+        for(const [id,item] of curMap){
+          const p = prevMap.get(id);
+          if(!p || JSON.stringify(p)!==JSON.stringify(item))
+            rows.push({ collection:col, id, data:item, deleted:false, updated_by:CLIENT_ID, updated_at:new Date().toISOString() });
+        }
+        // ลบ (soft delete)
+        for(const [id] of prevMap){
+          if(!curMap.has(id))
+            rows.push({ collection:col, id, data:{}, deleted:true, updated_by:CLIENT_ID, updated_at:new Date().toISOString() });
+        }
+      }
+      // meta = years + targets (เก็บเป็นแถวเดียว)
+      const meta = { years:db.years, targets:db.targets };
+      const prevMeta = cloudSnapshot ? { years:cloudSnapshot.years, targets:cloudSnapshot.targets } : null;
+      if(!prevMeta || JSON.stringify(prevMeta)!==JSON.stringify(meta))
+        rows.push({ collection:"meta", id:"app_meta", data:meta, deleted:false, updated_by:CLIENT_ID, updated_at:new Date().toISOString() });
+
+      if(rows.length){
+        const { error } = await sb.from("records").upsert(rows);
+        if(error) throw error;
+      }
+      cloudSnapshot = JSON.parse(JSON.stringify(db));
+      setCloudStatus("saved");
+    }catch(e){ console.error("cloud sync error:", e); setCloudStatus("error"); }
+  }, 350);
+}
+
+function rebuildDbFromRows(rows){
+  const base = defaultData();
+  const out = { hotels:[], salesReps:[], accounts:[], pipeline:[], functionEvents:[], activities:[], forecasts:[], revenue:[], years:base.years, targets:{} };
+  for(const r of rows){
+    if(r.deleted) continue;
+    if(r.collection==="meta"){ if(r.data){ out.years=r.data.years||out.years; out.targets=r.data.targets||{}; } continue; }
+    if(out[r.collection]) out[r.collection].push(r.data);
+  }
+  return out;
+}
+async function pushEntireDb(){ // ใช้ตอนตั้งค่าครั้งแรก (ฐานข้อมูลยังว่าง)
+  const rows = [];
+  for(const col of CLOUD_COLLECTIONS)
+    (db[col]||[]).forEach(item=>rows.push({ collection:col, id:item.id, data:item, deleted:false, updated_by:CLIENT_ID, updated_at:new Date().toISOString() }));
+  rows.push({ collection:"meta", id:"app_meta", data:{ years:db.years, targets:db.targets }, deleted:false, updated_by:CLIENT_ID, updated_at:new Date().toISOString() });
+  if(rows.length) await sb.from("records").upsert(rows);
+}
+
+// ดึงข้อมูลทั้งหมดจากคลาวด์ ประกอบเป็น db แล้วเริ่มฟังเรียลไทม์
+async function cloudBootstrap(){
+  try{
+    const { data:rows, error } = await sb.from("records").select("*");
+    if(error) throw error;
+    if(rows && rows.length){
+      db = rebuildDbFromRows(rows); normalizeData();
+    } else {
+      db = defaultData(); normalizeData();
+      if(!readOnly()) await pushEntireDb();
+    }
+    cloudSnapshot = JSON.parse(JSON.stringify(db));
+    subscribeRealtime();
+    setCloudStatus("saved");
+    render();
+  }catch(e){
+    console.error("cloud bootstrap failed:", e);
+    alert("เชื่อมต่อฐานข้อมูลไม่สำเร็จ: "+(e.message||e)+"\n\nแอปจะทำงานแบบออฟไลน์ในเครื่องนี้ชั่วคราว");
+    loadData(); render();
+  }
+}
+
+// รับการเปลี่ยนแปลงจากคนอื่น “ทีละรายการ” แล้วผสานเข้ากับ db (ไม่ทับทั้งก้อน)
+function subscribeRealtime(){
+  sb.channel("records_rt")
+    .on("postgres_changes", { event:"*", schema:"public", table:"records" }, payload=>{
+      const row = payload.new;
+      if(!row || row.updated_by===CLIENT_ID) return; // ข้ามสิ่งที่เราเขียนเอง
+      applyRemoteRow(row);
+    })
+    .subscribe();
+}
+function applyRemoteRow(row){
+  applyingRemote = true;
+  try{
+    if(row.collection==="meta"){
+      if(row.data){ db.years = row.data.years || db.years; db.targets = row.data.targets || {}; }
+    } else if(Array.isArray(db[row.collection])){
+      const arr = db[row.collection];
+      const idx = arr.findIndex(x=>x.id===row.id);
+      if(row.deleted){ if(idx>=0) arr.splice(idx,1); }
+      else { if(idx>=0) arr[idx] = row.data; else arr.push(row.data); }
+    }
+    normalizeData();
+    cloudSnapshot = JSON.parse(JSON.stringify(db)); // กันไม่ให้ diff รอบหน้าดันข้อมูลของคนอื่นกลับ
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+  }catch(e){ console.error(e); }
+  applyingRemote = false;
+  setCloudStatus("synced");
+  if(isUserBusy()) pendingRemoteRender = true; // กำลังพิมพ์อยู่ → ค่อยรีเฟรชทีหลัง
+  else render();
+}
+function flushPendingRender(){
+  if(pendingRemoteRender && !isUserBusy()){ pendingRemoteRender=false; render(); }
+}
+function setCloudStatus(state){
+  const el = document.getElementById("cloudStatus");
+  if(!el) return;
+  const map = { saved:["● ซิงค์แล้ว","#a7f3d0"], synced:["● อัปเดตจากทีม","#bae6fd"], error:["● บันทึกไม่สำเร็จ","#fecaca"] };
+  const [txt,color] = map[state]||["",""];
+  el.textContent = txt; el.style.color = color;
+}
+
+// ---------- Global UI state ----------
+let ui = { role:"sales", currentSales:"s1", currentHotelTab:"group", salesHotel:null, today:null, year:null, ownerTab:"group", ownerYear:null };
+
+// ---------- data helpers ----------
+function hotelById(id){ return HOTELS.find(h=>h.id===id); }
+function salesById(id){ return SALES_REPS.find(s=>s.id===id); }
+function accountsForHotel(hid){ return db.accounts.filter(a=>a.hotelIds.includes(hid)); }
+function pipelineForHotel(hid){ return db.pipeline.filter(p=>p.hotelId===hid); }
+function functionsForHotel(hid){ return db.functionEvents.filter(f=>f.hotelId===hid); }
+function activitiesForHotel(hid){ return db.activities.filter(a=>a.hotelId===hid).sort((a,b)=>b.date.localeCompare(a.date)); }
+function pipelineForSales(sid){ return db.pipeline.filter(p=>p.salesId===sid); }
+function functionsForSales(sid){ return db.functionEvents.filter(f=>f.salesId===sid); }
+function activitiesForSales(sid){ return db.activities.filter(a=>a.salesId===sid).sort((a,b)=>b.date.localeCompare(a.date)); }
+function accountsForSales(sid){ return db.accounts.filter(a=>a.salesId===sid); }
+function sumVal(arr,key){ return arr.reduce((s,x)=>s+(Number(x[key])||0),0); }
+
+// ---------- ON HAND (auto-linked from won pipeline + confirmed functions) ----------
+function onHandPipeline(hid,key){ return sumVal(db.pipeline.filter(p=>p.hotelId===hid && p.stage==="won" && ymKey(p.expectedCloseDate)===key),"estValue"); }
+function onHandFunction(hid,key){ return sumVal(db.functionEvents.filter(f=>f.hotelId===hid && ONHAND_FN_STATUS.includes(f.status) && ymKey(f.eventDate)===key),"estRevenue"); }
+function onHandForMonth(hid,key){ return onHandPipeline(hid,key)+onHandFunction(hid,key); }
+function onHandForSalesMonth(sid,key){
+  const won = sumVal(db.pipeline.filter(p=>p.salesId===sid && p.stage==="won" && ymKey(p.expectedCloseDate)===key),"estValue");
+  const conf = sumVal(db.functionEvents.filter(f=>f.salesId===sid && ONHAND_FN_STATUS.includes(f.status) && ymKey(f.eventDate)===key),"estRevenue");
+  return won+conf;
+}
+
+// ---------- FORECAST (two buckets) ----------
+function forecastEntry(hid,key){ return db.forecasts.find(x=>x.hotelId===hid && x.month===key); }
+function fcPipeline(hid,key){ const e=forecastEntry(hid,key); return e?Number(e.pipelineForecast)||0:0; }
+function fcFunction(hid,key){ const e=forecastEntry(hid,key); return e?Number(e.functionForecast)||0:0; }
+function fcTotal(hid,key){ return fcPipeline(hid,key)+fcFunction(hid,key); }
+function setForecastPart(hid,month,part,value){
+  if(readOnly()) return;
+  let e = db.forecasts.find(x=>x.hotelId===hid && x.month===month);
+  if(!e){ e={ id:uid("fc"), hotelId:hid, month, pipelineForecast:0, functionForecast:0, notes:"" }; db.forecasts.push(e); }
+  e[part] = Number(value)||0;
+  saveData(); render();
+}
+
+// group-wide sums for a month
+function groupOnHand(key){ return HOTELS.reduce((s,h)=>s+onHandForMonth(h.id,key),0); }
+function groupForecast(key){ return HOTELS.reduce((s,h)=>s+fcTotal(h.id,key),0); }
+function groupOpenPipeline(){ return db.pipeline.filter(p=>p.stage!=="won" && p.stage!=="lost"); }
+function monthKey(y,m){ return y+"-"+String(m).padStart(2,"0"); }
+function yearMonths(y){ const a=[]; for(let m=1;m<=12;m++) a.push(monthKey(y,m)); return a; }
+function groupOnHandYear(y){ return yearMonths(y).reduce((s,k)=>s+groupOnHand(k),0); }
+function groupForecastYear(y){ return yearMonths(y).reduce((s,k)=>s+groupForecast(k),0); }
+
+// ---------- TOTAL REVENUE (Owner view: OTA/FIT/Walk-in/ฝ่ายขาย/อื่นๆ) ----------
+function revEntry(hid,key){ return db.revenue.find(r=>r.hotelId===hid && r.month===key); }
+function revChannel(hid,key,ch){ const e=revEntry(hid,key); return e?Number(e[ch])||0:0; }
+function revHotelMonth(hid,key){ const e=revEntry(hid,key); return e?REVENUE_CH_KEYS.reduce((s,k)=>s+(Number(e[k])||0),0):0; }
+function revGroupMonth(key){ return HOTELS.reduce((s,h)=>s+revHotelMonth(h.id,key),0); }
+function revHotelMonthChannel(hid,y,m,ch){ return revChannel(hid,monthKey(y,m),ch); }
+// a month "has data" if any hotel (or a given hotel) recorded revenue that month
+function revHotelYear(hid,y){ return yearMonths(y).reduce((s,k)=>s+revHotelMonth(hid,k),0); }
+function revGroupYear(y){ return yearMonths(y).reduce((s,k)=>s+revGroupMonth(k),0); }
+function revHotelYearChannel(hid,y,ch){ let s=0; for(let m=1;m<=12;m++) s+=revChannel(hid,monthKey(y,m),ch); return s; }
+function revGroupYearChannel(y,ch){ return HOTELS.reduce((s,h)=>s+revHotelYearChannel(h.id,y,ch),0); }
+// monthly array (1..12) for a scope ('group' or hotelId)
+function revMonthlyArray(scope,y){
+  return yearMonths(y).map(k=> scope==="group" ? revGroupMonth(k) : revHotelMonth(scope,k));
+}
+function revScopeYear(scope,y){ return scope==="group" ? revGroupYear(y) : revHotelYear(scope,y); }
+function revScopeYearChannel(scope,y,ch){ return scope==="group" ? revGroupYearChannel(y,ch) : revHotelYearChannel(scope,y,ch); }
+// which months (1..12) have any recorded revenue for this scope+year
+function revMonthsWithData(scope,y){
+  const out=[]; const arr=revMonthlyArray(scope,y);
+  arr.forEach((v,i)=>{ if(v>0) out.push(i+1); });
+  return out;
+}
+// sum only the given month-numbers, for a scope+year
+function revSumMonths(scope,y,monthNums){
+  return monthNums.reduce((s,m)=>s+(scope==="group"?revGroupMonth(monthKey(y,m)):revHotelMonth(scope,monthKey(y,m))),0);
+}
+function pctChange(cur,prev){ if(!prev) return null; return (cur-prev)/prev*100; }
+
+// hotels a rep touches
+function repHotels(sid){
+  const set = new Set();
+  db.pipeline.filter(p=>p.salesId===sid).forEach(p=>set.add(p.hotelId));
+  db.functionEvents.filter(f=>f.salesId===sid).forEach(f=>set.add(f.hotelId));
+  db.accounts.filter(a=>a.salesId===sid).forEach(a=>a.hotelIds.forEach(h=>set.add(h)));
+  const ids = [...set];
+  return ids.length ? HOTELS.filter(h=>ids.includes(h.id)) : HOTELS.slice();
+}
+
+// ============================================================
+// RENDER ROOT
+// ============================================================
+function render(){
+  const app = document.getElementById("app");
+  document.body.classList.toggle("readonly", readOnly());
+  const mainView = ui.role==="sales" ? renderSalesView()
+                 : ui.role==="owner" ? renderOwnerView()
+                 : renderGMView();
+  app.innerHTML = `
+    ${renderTopBar()}
+    <div class="max-w-7xl mx-auto px-4 py-6">
+      ${mainView}
+    </div>
+    <div id="modalRoot"></div>`;
+  if (window.__chartRefs){ Object.values(window.__chartRefs).forEach(c=>c&&c.destroy&&c.destroy()); }
+  window.__chartRefs = {};
+  if (ui.role==="gm"){
+    if (ui.currentHotelTab==="group") drawGroupCharts();
+    else drawHotelCharts(ui.currentHotelTab);
+  } else if (ui.role==="owner"){
+    drawOwnerCharts();
+  }
+}
+
+function renderTopBar(){
+  return `
+  <div class="shadow-lg" style="background:linear-gradient(120deg,#0f3a52 0%,#0f4c66 55%,#12657f 100%);">
+    <div class="max-w-7xl mx-auto px-4 py-4 flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <div class="text-lg font-bold text-white tracking-tight">Plaai Group <span class="text-white font-normal" style="opacity:.85">| Sales Ops</span></div>
+        <div class="text-xs mt-1 flex flex-wrap items-center gap-2" style="color:#ffffff;">
+          <span style="opacity:.95">เครื่องมือติดตามงานฝ่ายขาย</span>
+          <span style="opacity:.7">• ข้อมูล ณ</span>
+          <input type="date" value="${todayStr()}" onchange="setToday(this.value)" title="เปลี่ยนวันที่ปัจจุบันได้ (ปกติจะอัปเดตตามวันจริงอัตโนมัติ)"
+                 class="rounded px-2 py-0.5 text-slate-700 bg-white/90 border-0" style="font-size:11px;" />
+          <button onclick="setToday('')" title="กลับไปใช้วันที่จริงวันนี้" class="rounded px-2 py-0.5 text-white" style="font-size:11px;background:rgba(255,255,255,0.18)">วันนี้</button>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        <div class="bg-white/10 rounded-full p-1 flex text-sm backdrop-blur-sm">
+          <button onclick="setRole('sales')" class="tab-pill px-4 py-1.5 rounded-full ${ui.role==='sales'?'active':'text-cyan-50'}">มุมมองฝ่ายขาย</button>
+          <button onclick="setRole('gm')" class="tab-pill px-4 py-1.5 rounded-full ${ui.role==='gm'?'active':'text-cyan-50'}">มุมมองผู้บริหาร</button>
+          <button onclick="setRole('owner')" class="tab-pill px-4 py-1.5 rounded-full ${ui.role==='owner'?'active':'text-cyan-50'}">มุมมองเจ้าของ</button>
+        </div>
+        ${readOnly() ? `<span class="text-xs font-semibold px-2 py-1 rounded" style="background:rgba(255,255,255,0.18);color:#fde68a;" title="บัญชีนี้เข้าดูข้อมูลได้อย่างเดียว">👁 ดูอย่างเดียว</span>` : ""}
+        ${CLOUD ? `<span id="cloudStatus" class="text-xs" style="color:#a7f3d0;">●</span>` : `<span class="text-xs" style="color:#fde68a;" title="กำลังใช้งานแบบออฟไลน์ในเครื่องนี้">ออฟไลน์</span>`}
+        <button onclick="showWeeklySummary()" title="สร้าง/ส่งสรุปยอดขายประจำสัปดาห์เข้า LINE" class="btn text-xs bg-white/20 hover:bg-white/30 text-white px-3 py-1.5">📤 สรุปสัปดาห์</button>
+        <button onclick="exportData()" title="ดาวน์โหลดข้อมูลสำรอง" class="btn text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-1.5">Export</button>
+        <label class="ro-hide btn text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 cursor-pointer">Import
+          <input type="file" accept="application/json" class="hidden" onchange="importData(event)" />
+        </label>
+        ${(CLOUD && currentUser) ? `<button onclick="logout()" title="ออกจากระบบ" class="btn text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-1.5">ออกจากระบบ</button>` : ""}
+      </div>
+    </div>
+  </div>`;
+}
+
+function kpiCard(label,value,sub,gradient){
+  return `<div class="kpi" style="background:${gradient};">
+    <div class="lbl">${label}</div><div class="num">${value}</div><div class="sub">${sub}</div></div>`;
+}
+function escAttr(s){ return String(s||"").replace(/'/g,"&#39;").replace(/"/g,"&quot;"); }
+
+// gradients (clean modern family)
+// gradients are colour-matched to their action button so a metric and its
+// "+ add" button share the same colour (Account=teal, Pipeline=blue, Function=amber)
+const G = {
+  onhand:"linear-gradient(135deg,#0f766e,#115e59)",   // เขียว = ยอดที่ยืนยันแล้ว
+  forecast:"linear-gradient(135deg,#155e75,#0c4a5e)",
+  pipeline:"linear-gradient(135deg,#0369a1,#075985)", // น้ำเงิน = Pipeline (ตรงกับปุ่ม + Pipeline Deal)
+  account:"linear-gradient(135deg,#0e7490,#0c6a86)",  // เขียวมิ้นต์ = Account (ตรงกับปุ่ม + Account)
+  warn:"linear-gradient(135deg,#b45309,#92580a)",     // ส้มอำพัน = Function (ตรงกับปุ่ม + งาน Function)
+  neutral:"linear-gradient(135deg,#475569,#1e293b)",
+  brand:"linear-gradient(135deg,#0f3a52,#12546f)"
+};
+
+// ============================================================
+// SALES VIEW
+// ============================================================
+function renderSalesView(){
+  const sid = ui.currentSales;
+  const rep = salesById(sid);
+  const mk = currentMonthKey();
+  const openPipeline = pipelineForSales(sid).filter(p=>p.stage!=="won" && p.stage!=="lost");
+  const myFunctions = functionsForSales(sid).filter(f=>f.status!=="completed" && f.status!=="cancelled");
+  const myAccounts = accountsForSales(sid);
+  const myActivities = activitiesForSales(sid).slice(0,10);
+  const myOnHand = onHandForSalesMonth(sid, mk);
+
+  const overdue = myAccounts.filter(a=>daysDiff(a.lastContactDate)<=-14);
+  const upcoming = myFunctions.filter(f=>daysDiff(f.eventDate)<=2 && daysDiff(f.eventDate)>=0 && f.status!=="beo_sent");
+
+  // forecast hotel context
+  const hotels = repHotels(sid);
+  if (!ui.salesHotel || !hotels.find(h=>h.id===ui.salesHotel)) ui.salesHotel = hotels[0].id;
+
+  return `
+  <div class="flex flex-wrap items-center justify-between gap-3 mb-5">
+    <div class="flex items-center gap-2">
+      <span class="text-sm text-slate-500">ฉันคือ</span>
+      <select onchange="setSalesRep(this.value)" class="btn-ghost btn px-3 py-1.5 text-sm">
+        ${SALES_REPS.map(s=>`<option value="${s.id}" ${s.id===sid?"selected":""}>${s.name}</option>`).join("")}
+      </select>
+      <button onclick="openSalesModal('${sid}')" title="แก้ไข/ลบเซลล์คนนี้" class="btn btn-ghost text-xs px-2 py-1.5">✎</button>
+      <button onclick="openSalesModal()" title="เพิ่มฝ่ายขายคนใหม่" class="btn btn-ghost text-xs px-2 py-1.5">＋ เพิ่มเซลล์</button>
+      <span class="text-sm text-slate-400 ml-1">• เดือน ${monthLabel(mk)}</span>
+    </div>
+    <div class="flex gap-2 flex-wrap">
+      ${qbtn("openActivityModal()","#334155","＋","Activity")}
+      ${qbtn("openPipelineModal()","#0369a1","＋","Pipeline Deal")}
+      ${qbtn("openFunctionModal()","#b45309","＋","งาน Function")}
+      ${qbtn("openAccountModal()","#0e7490","＋","Account")}
+    </div>
+  </div>
+
+  ${(overdue.length||upcoming.length)?`
+  <div class="rounded-2xl p-4 mb-5 border" style="background:#fff5f6;border-color:#fecdd3;">
+    <div class="font-semibold text-rose-800 mb-2">⚠ สิ่งที่ต้องติดตามวันนี้ (${rep.name})</div>
+    <ul class="text-sm text-rose-700 space-y-1">
+      ${overdue.map(a=>`<li>• Account "<b>${a.name}</b>" ไม่ได้ติดต่อมา ${Math.abs(daysDiff(a.lastContactDate))} วันแล้ว</li>`).join("")}
+      ${upcoming.map(f=>`<li>• งาน Function "<b>${f.clientName}</b>" (${hotelById(f.hotelId).name}) อีก ${daysDiff(f.eventDate)} วัน — ยังไม่ส่ง BEO</li>`).join("")}
+    </ul>
+  </div>`:""}
+
+  <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+    ${kpiCard("On Hand เดือนนี้ (ของฉัน)", fmtM(myOnHand), "ยอดที่ปิด/ยืนยันแล้ว", G.onhand)}
+    ${kpiCard("Pipeline เปิดอยู่", fmtM(sumVal(openPipeline,"estValue")), `${openPipeline.length} ดีลที่กำลังตาม`, G.pipeline)}
+    ${kpiCard("งาน Function ที่ดูแล", myFunctions.length, "งานที่ยังไม่จบ", G.warn)}
+    ${kpiCard("Account ที่ดูแล", myAccounts.length, "Corporate Account", G.account)}
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+    <div class="card p-4">
+      <div class="flex items-center justify-between mb-3">
+        <div class="section-title">Pipeline ของฉัน</div>
+        <button onclick="openPipelineModal()" class="btn btn-ghost text-xs px-3 py-1.5">＋ เพิ่มดีล</button>
+      </div>
+      <div class="text-xs text-slate-400 mb-2">ติ๊กสถานะเป็น <b>“ปิดได้แน่นอน (Won)”</b> แล้วยอดจะเข้า On Hand อัตโนมัติ</div>
+      <div class="overflow-x-auto"><table class="w-full text-sm">
+        <thead><tr class="text-left text-slate-500 border-b"><th class="py-1">Account/งาน</th><th>โรงแรม</th><th>มูลค่า</th><th>Stage</th><th class="text-right">จัดการ</th></tr></thead>
+        <tbody>
+        ${pipelineForSales(sid).map(p=>`
+          <tr class="border-b last:border-0">
+            <td class="py-1.5">${p.accountName}${p.stage==="won"?'<span class="link-tag">→ On Hand</span>':""}</td>
+            <td>${hotelById(p.hotelId).name}</td>
+            <td>${fmtMoney(p.estValue)}</td>
+            <td>${stageSelect(p)}</td>
+            <td class="text-right whitespace-nowrap"><button onclick="openPipelineModal('${p.id}')" class="text-cyan-700 text-xs mr-2">แก้ไข</button><button onclick="deletePipeline('${p.id}')" class="text-rose-500 text-xs">ลบ</button></td>
+          </tr>`).join("") || `<tr><td class="py-2 text-slate-400" colspan="5">ยังไม่มีข้อมูล</td></tr>`}
+        </tbody>
+      </table></div>
+    </div>
+
+    <div class="card p-4">
+      <div class="flex items-center justify-between mb-3">
+        <div class="section-title">งาน Function ของฉัน</div>
+        <button onclick="openFunctionModal()" class="btn btn-ghost text-xs px-3 py-1.5">＋ เพิ่มงาน</button>
+      </div>
+      <div class="text-xs text-slate-400 mb-2">ติ๊กสถานะเป็น <b>“ยืนยันแล้ว”</b> / BEO / จบงาน → ยอดเข้า On Hand อัตโนมัติ</div>
+      <div class="overflow-x-auto"><table class="w-full text-sm">
+        <thead><tr class="text-left text-slate-500 border-b"><th class="py-1">ลูกค้า/งาน</th><th>โรงแรม</th><th>วันงาน</th><th>สถานะ</th><th class="text-right">จัดการ</th></tr></thead>
+        <tbody>
+        ${functionsForSales(sid).map(f=>`
+          <tr class="border-b last:border-0">
+            <td class="py-1.5">${f.clientName}${ONHAND_FN_STATUS.includes(f.status)?'<span class="link-tag">→ On Hand</span>':""}</td>
+            <td>${hotelById(f.hotelId).name}</td>
+            <td>${f.eventDate}</td>
+            <td>${functionSelect(f)}</td>
+            <td class="text-right whitespace-nowrap">
+              <button onclick="quickLogFor('${f.hotelId}','${escAttr(f.clientName)}')" class="text-slate-500 text-xs mr-2" title="บันทึกกิจกรรม">+ Activity</button>
+              <button onclick="openFunctionModal('${f.id}')" class="text-cyan-700 text-xs mr-2">แก้ไข</button>
+              <button onclick="deleteFunction('${f.id}')" class="text-rose-500 text-xs">ลบ</button>
+            </td>
+          </tr>`).join("") || `<tr><td class="py-2 text-slate-400" colspan="5">ยังไม่มีข้อมูล</td></tr>`}
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+
+  ${renderSalesForecast(sid, hotels)}
+
+  <div class="card p-4 mt-5">
+    <div class="section-title mb-3">กิจกรรมล่าสุดของฉัน</div>
+    <div class="overflow-x-auto"><table class="w-full text-sm">
+      <thead><tr class="text-left text-slate-500 border-b"><th class="py-1">วันที่</th><th>ประเภท</th><th>โรงแรม</th><th>Account/งาน</th><th>บันทึก</th><th class="text-right">จัดการ</th></tr></thead>
+      <tbody>
+      ${myActivities.map(a=>`
+        <tr class="border-b last:border-0">
+          <td class="py-1.5">${a.date}</td><td>${ACTIVITY_TYPES[a.type]||a.type}</td>
+          <td>${hotelById(a.hotelId).name}</td><td>${a.accountName||"-"}</td>
+          <td class="text-slate-500">${a.notes||""}</td>
+          <td class="text-right"><button onclick="deleteActivity('${a.id}')" class="text-rose-500 text-xs">ลบ</button></td>
+        </tr>`).join("") || `<tr><td class="py-2 text-slate-400" colspan="6">ยังไม่มีข้อมูล</td></tr>`}
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="card p-4 mt-5">
+    <div class="flex items-center justify-between mb-3">
+      <div class="section-title">Account ที่ดูแล</div>
+      <button onclick="openAccountModal()" class="btn btn-ghost text-xs px-3 py-1.5">＋ เพิ่ม Account</button>
+    </div>
+    <div class="overflow-x-auto"><table class="w-full text-sm">
+      <thead><tr class="text-left text-slate-500 border-b"><th class="py-1">ชื่อบริษัท</th><th>โรงแรม</th><th>ผู้ติดต่อ</th><th>เบอร์โทร</th><th>สถานะ</th><th>Room Nights</th><th>ติดต่อล่าสุด</th><th class="text-right">จัดการ</th></tr></thead>
+      <tbody>
+      ${myAccounts.map(a=>`
+        <tr class="border-b last:border-0">
+          <td class="py-1.5">${a.name}</td>
+          <td>${a.hotelIds.map(h=>hotelById(h).name).join(", ")}</td>
+          <td>${a.contactPerson||"-"}</td><td>${a.phone||"-"}</td>
+          <td>${accountSelect(a)}</td><td>${a.roomNightsMTD}</td>
+          <td>${a.lastContactDate} ${daysDiff(a.lastContactDate)<=-14?'<span class="text-rose-500">(เงียบไป '+Math.abs(daysDiff(a.lastContactDate))+' วัน)</span>':''}
+              ${a.lastContactTopic?`<div class="text-xs text-slate-400">${a.lastContactTopic}</div>`:""}</td>
+          <td class="text-right whitespace-nowrap">
+            <button onclick="quickLogFor('${a.hotelIds[0]}','${escAttr(a.name)}')" class="text-slate-500 text-xs mr-2" title="บันทึกกิจกรรม">+ Activity</button>
+            <button onclick="openAccountModal('${a.id}')" class="text-cyan-700 text-xs mr-2">แก้ไข</button>
+            <button onclick="deleteAccount('${a.id}')" class="text-rose-500 text-xs">ลบ</button>
+          </td>
+        </tr>`).join("") || `<tr><td class="py-2 text-slate-400" colspan="8">ยังไม่มีข้อมูล</td></tr>`}
+      </tbody>
+    </table></div>
+  </div>
+  `;
+}
+
+function qbtn(onclick,color,ico,label){
+  return `<button class="qbtn-solid" onclick="${onclick}" style="background:${color}"><span class="qi">${ico}</span>${label}</button>`;
+}
+
+// ---- Sales forecast (two buckets, inline editable) ----
+function renderSalesForecast(sid, hotels){
+  const hid = ui.salesHotel;
+  const months = next6Months();
+  return `
+  <div class="card p-4 mt-5" style="border-color:#dbeafe;">
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-1">
+      <div class="section-title">พยากรณ์ยอด (Forecast) — ปรับได้ทั้งฝั่ง Pipeline และฝั่ง Function</div>
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-slate-500">โรงแรม</span>
+        <select onchange="setSalesHotel(this.value)" class="btn btn-ghost text-xs px-3 py-1.5">
+          ${hotels.map(h=>`<option value="${h.id}" ${h.id===hid?"selected":""}>${h.name}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+    <div class="text-xs text-slate-400 mb-3">พิมพ์ตัวเลขในช่อง Forecast ได้เลย — ระบบบวกรวมให้อัตโนมัติ และส่งขึ้นหน้าผู้บริหารทันที ส่วน On Hand คำนวณเองจากงานที่ปิด/ยืนยันแล้ว</div>
+    <div class="overflow-x-auto"><table class="w-full text-sm">
+      <thead><tr class="text-left text-slate-500 border-b">
+        <th class="py-1">เดือน</th>
+        <th class="text-right">On Hand (ยืนยันแล้ว)</th>
+        <th class="text-right">Forecast: Pipeline</th>
+        <th class="text-right">Forecast: Function</th>
+        <th class="text-right">Forecast รวม</th>
+        <th class="text-right">ส่วนต่าง (On Hand − Forecast)</th>
+      </tr></thead>
+      <tbody>
+      ${months.map((mk,i)=>{
+        const oh = onHandForMonth(hid,mk);
+        const fp = fcPipeline(hid,mk), ff = fcFunction(hid,mk), ft = fp+ff;
+        const diff = oh - ft;
+        const isNext = i===1;
+        return `<tr class="border-b last:border-0 ${isNext?'bg-cyan-50/60':''}">
+          <td class="py-2 font-medium">${monthLabel(mk)} ${isNext?'<span class="badge bg-cyan-100 text-cyan-800 ml-1">เดือนถัดไป</span>':''}</td>
+          <td class="text-right font-semibold" style="color:var(--pos)">${fmtMoney(oh)}</td>
+          <td class="text-right"><input ${roDisabled()} class="fc-input" type="number" value="${fp||''}" placeholder="0"
+                onchange="setForecastPart('${hid}','${mk}','pipelineForecast',this.value)"></td>
+          <td class="text-right"><input ${roDisabled()} class="fc-input" type="number" value="${ff||''}" placeholder="0"
+                onchange="setForecastPart('${hid}','${mk}','functionForecast',this.value)"></td>
+          <td class="text-right font-semibold">${fmtMoney(ft)}</td>
+          <td class="text-right ${diff>=0?'text-teal-600':'text-rose-500'}">${(diff>=0?'+':'')+fmtMoney(diff)}</td>
+        </tr>`;
+      }).join("")}
+      </tbody>
+    </table></div>
+  </div>`;
+}
+
+// ---- interactive selects (sales only) ----
+function stageSelect(p){
+  return `<select ${roDisabled()} onchange="updateField('pipeline','${p.id}','stage',this.value)" class="pill-select badge ${STAGE_COLOR[p.stage]}">
+    ${Object.entries(PIPELINE_STAGES).map(([k,v])=>`<option value="${k}" ${k===p.stage?"selected":""}>${v}</option>`).join("")}</select>`;
+}
+function functionSelect(f){
+  return `<select ${roDisabled()} onchange="updateField('functionEvents','${f.id}','status',this.value)" class="pill-select badge ${FUNCTION_COLOR[f.status]}">
+    ${Object.entries(FUNCTION_STATUS).map(([k,v])=>`<option value="${k}" ${k===f.status?"selected":""}>${v}</option>`).join("")}</select>`;
+}
+function accountSelect(a){
+  return `<select ${roDisabled()} onchange="updateField('accounts','${a.id}','status',this.value)" class="pill-select badge ${ACCOUNT_COLOR[a.status]}">
+    ${Object.entries(ACCOUNT_STATUS).map(([k,v])=>`<option value="${k}" ${k===a.status?"selected":""}>${v}</option>`).join("")}</select>`;
+}
+function updateField(collection,id,field,value){
+  if(readOnly()){ render(); return; }
+  const item = db[collection].find(x=>x.id===id);
+  if(item){ item[field]=value; saveData(); render(); }
+}
+
+// ---- read-only badges (GM) ----
+function stageBadge(s){ return `<span class="badge ${STAGE_COLOR[s]}">${PIPELINE_STAGES[s]}</span>`; }
+function functionBadge(s){ return `<span class="badge ${FUNCTION_COLOR[s]}">${FUNCTION_STATUS[s]}</span>`; }
+function accountBadge(s){ return `<span class="badge ${ACCOUNT_COLOR[s]}">${ACCOUNT_STATUS[s]}</span>`; }
+
+// ============================================================
+// GM (EXECUTIVE) VIEW — results only, read-only
+// ============================================================
+function renderGMView(){
+  const tabs = `
+  <div class="flex flex-wrap items-center gap-2 mb-6">
+    <div class="flex flex-wrap gap-1 bg-slate-200/60 rounded-full p-1 w-fit">
+      <button onclick="setHotelTab('group')" class="tab-pill px-4 py-2 rounded-full text-sm ${ui.currentHotelTab==='group'?'active':''}">ภาพรวมทั้งกลุ่ม</button>
+      ${HOTELS.map(h=>`<button onclick="setHotelTab('${h.id}')" class="tab-pill px-4 py-2 rounded-full text-sm ${ui.currentHotelTab===h.id?'active':''}">${h.name}</button>`).join("")}
+    </div>
+    <button onclick="openHotelModal()" title="เพิ่มโรงแรมใหม่" class="btn btn-ghost text-xs px-3 py-2">＋ เพิ่มโรงแรม</button>
+  </div>`;
+  if (ui.currentHotelTab==="group") return tabs + renderGroupDashboard();
+  const hid = ui.currentHotelTab, hotel = hotelById(hid);
+  return tabs + `
+  <div class="mb-5 flex items-center gap-3">
+    <div class="w-1.5 h-10 rounded-full" style="background:${hotel.accent};"></div>
+    <div class="flex-1"><div class="text-xl font-bold text-slate-800">${hotel.name}</div>
+    <div class="text-sm text-slate-500">${hotel.sub}</div></div>
+    <button onclick="openHotelModal('${hid}')" title="แก้ไข/ลบโรงแรมนี้" class="btn btn-ghost text-xs px-3 py-1.5">✎ แก้ไขโรงแรม</button>
+  </div>
+  ${renderHotelDashboard(hid,hotel)}`;
+}
+
+// ---------- GROUP (consolidated, vs 200M target) ----------
+function renderGroupDashboard(){
+  if(!ui.year) ui.year = new Date().getFullYear();
+  const yr = ui.year;
+  const mk = currentMonthKey();
+  const ohMonth = groupOnHand(mk);
+  const fcMonth = groupForecast(mk);
+  const open = groupOpenPipeline();
+
+  // annual progress based on the SELECTED year (target is editable per year)
+  const TARGET = targetFor(yr);
+  const secured = groupOnHandYear(yr);            // ยืนยันแล้ว ทั้งปี
+  const projected = secured + groupForecastYear(yr); // ยืนยัน + คาดการณ์ ทั้งปี
+  const pctSecured = Math.min(100, secured/TARGET*100);
+  const pctProjected = Math.min(100, projected/TARGET*100);
+
+  // pipeline by stage (group)
+  const stages = ["lead","quoted","negotiation","won"];
+  const stageData = stages.map(st=>({ st, count: db.pipeline.filter(p=>p.stage===st).length,
+    value: sumVal(db.pipeline.filter(p=>p.stage===st),"estValue") }));
+  const maxStage = Math.max(1, ...stageData.map(s=>s.value));
+
+  const near = [mk, addMonthsKey(mk,1), addMonthsKey(mk,2)]; // เดือนนี้ + อีก 2 เดือน
+  const ym = yearMonths(yr);
+
+  return `
+  <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+    ${kpiCard("On Hand เดือนนี้ (ทั้งกลุ่ม)", fmtM(ohMonth), "ยืนยัน/ปิดแล้ว "+monthLabel(mk), G.onhand)}
+    ${kpiCard("Forecast เดือนนี้ (ทั้งกลุ่ม)", fmtM(fcMonth), "Pipeline + Function", G.forecast)}
+    ${kpiCard("Pipeline เปิดอยู่ (ทั้งกลุ่ม)", fmtM(sumVal(open,"estValue")), `${open.length} ดีลที่กำลังตาม`, G.pipeline)}
+    ${kpiCard("เป้าทั้งปี พ.ศ. "+(yr+543), fmtM(TARGET), "กดปุ่ม “แก้ไขเป้า” เพื่อปรับ", G.brand)}
+  </div>
+
+  <div class="card p-4 mb-6 flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <div class="section-title">เลือกปีที่ต้องการดู</div>
+      <div class="text-xs text-slate-400 mt-0.5">ตารางสรุปทั้งปีและความคืบหน้าเทียบเป้าจะอิงตามปีที่เลือก</div>
+    </div>
+    <div class="flex items-center gap-2">
+      <select onchange="setYear(this.value)" class="btn btn-ghost text-sm px-3 py-2">
+        ${db.years.slice().sort((a,b)=>a-b).map(y=>`<option value="${y}" ${y===yr?"selected":""}>ปี พ.ศ. ${y+543}</option>`).join("")}
+      </select>
+      <button onclick="addYear()" class="btn btn-primary text-sm px-3 py-2">＋ เพิ่มปีถัดไป</button>
+    </div>
+  </div>
+
+  <div class="card p-5 mb-6">
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+      <div class="section-title">ความคืบหน้าเทียบเป้าทั้งปี — พ.ศ. ${yr+543}</div>
+      <div class="flex items-center gap-2">
+        <div class="text-sm text-slate-500">คาดการณ์รวม <b class="text-slate-700">${fmtMoney(projected)}</b> / เป้า ${fmtMoney(TARGET)}</div>
+        <button onclick="openTargetModal(${yr})" class="btn btn-ghost text-xs px-3 py-1.5">✎ แก้ไขเป้า</button>
+      </div>
+    </div>
+    <div class="progress-track relative">
+      <div class="progress-fill" style="width:${pctProjected}%; opacity:.35;"></div>
+      <div class="progress-fill" style="width:${pctSecured}%; position:absolute; top:0; left:0;"></div>
+    </div>
+    <div class="flex justify-between text-xs mt-2">
+      <span style="color:var(--pos)">■ ยืนยันแล้ว (On Hand): <b>${fmtMoney(secured)}</b> · ${pctSecured.toFixed(0)}%</span>
+      <span class="text-slate-400">■ รวมคาดการณ์: <b>${fmtMoney(projected)}</b> · ${pctProjected.toFixed(0)}%</span>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-6">
+    <div class="card p-4">
+      <div class="section-title mb-3">On Hand vs Forecast แยกรายโรงแรม (เดือนนี้)</div>
+      <canvas id="grp-onhand" height="200"></canvas>
+    </div>
+    <div class="card p-4">
+      <div class="section-title mb-3">Pipeline ที่กำลังตาม — แยกตามขั้นตอน (Stage)</div>
+      <div class="space-y-3 mt-2">
+        ${stageData.map(s=>`
+          <div>
+            <div class="flex justify-between text-sm mb-1">
+              <span class="font-medium text-slate-700">${PIPELINE_STAGES[s.st]} <span class="text-slate-400">(${s.count} ดีล)</span></span>
+              <span class="font-semibold">${fmtMoney(s.value)}</span>
+            </div>
+            <div class="stage-bar"><div style="height:100%;width:${s.value/maxStage*100}%;background:${STAGE_ACCENT[s.st]};border-radius:9999px;"></div></div>
+          </div>`).join("")}
+      </div>
+      <div class="text-xs text-slate-400 mt-3">ดีลที่ฝ่ายขายกำลังตาม จะแสดงที่นี่ตามขั้นตอนโดยอัตโนมัติ พอปิดได้ (Won) ยอดจะย้ายไปรวมใน On Hand</div>
+    </div>
+  </div>
+
+  <div class="card p-4 mb-6">
+    <div class="section-title mb-3">สรุปรายโรงแรม — เดือนนี้และอีก 2 เดือนถัดไป</div>
+    <div class="overflow-x-auto"><table class="w-full text-sm">
+      <thead>
+        <tr class="text-slate-500 border-b">
+          <th class="py-1 text-left" rowspan="2">โรงแรม</th>
+          ${near.map((k,i)=>`<th class="text-center border-l ${i===0?'bg-cyan-50/60':''}" colspan="2">${monthLabel(k)}${i===0?' <span class="badge bg-cyan-100 text-cyan-800">เดือนนี้</span>':''}</th>`).join("")}
+        </tr>
+        <tr class="text-slate-400 border-b" style="font-size:11px;">
+          ${near.map((k,i)=>`<th class="text-right border-l ${i===0?'bg-cyan-50/60':''} py-1">On Hand</th><th class="text-right">Forecast</th>`).join("")}
+        </tr>
+      </thead>
+      <tbody>
+      ${HOTELS.map(h=>`
+        <tr class="border-b last:border-0">
+          <td class="py-2 font-medium">${h.name}</td>
+          ${near.map((k,i)=>`
+            <td class="text-right border-l ${i===0?'bg-cyan-50/40':''}" style="color:var(--pos)">${fmtMoney(onHandForMonth(h.id,k))}</td>
+            <td class="text-right text-slate-600">${fmtMoney(fcTotal(h.id,k))}</td>`).join("")}
+        </tr>`).join("")}
+      <tr class="border-t-2 font-semibold" style="background:#f8fafc;">
+        <td class="py-2">รวมทั้งกลุ่ม</td>
+        ${near.map((k,i)=>`
+          <td class="text-right border-l ${i===0?'bg-cyan-50/60':''}" style="color:var(--pos)">${fmtMoney(groupOnHand(k))}</td>
+          <td class="text-right">${fmtMoney(groupForecast(k))}</td>`).join("")}
+      </tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="card p-4 mb-6">
+    <div class="section-title mb-1">ตารางสรุปทั้งปี — พ.ศ. ${yr+543}</div>
+    <div class="text-xs text-slate-400 mb-3">On Hand คำนวณอัตโนมัติจากงานที่ปิด/ยืนยันแล้ว · Forecast จากที่ฝ่ายขายกรอกไว้ · เทียบเป้า ${fmtMoney(TARGET)}/ปี</div>
+    <div class="overflow-x-auto"><table class="w-full text-sm">
+      <thead><tr class="text-left text-slate-500 border-b">
+        <th class="py-1">เดือน</th>
+        <th class="text-right">On Hand</th>
+        <th class="text-right">Forecast Pipeline</th>
+        <th class="text-right">Forecast Function</th>
+        <th class="text-right">Forecast รวม</th>
+        <th class="text-right">รวมคาดการณ์ (On Hand + Forecast)</th>
+      </tr></thead>
+      <tbody>
+      ${ym.map(k=>{
+        const oh=groupOnHand(k);
+        const fp=HOTELS.reduce((s,h)=>s+fcPipeline(h.id,k),0);
+        const ff=HOTELS.reduce((s,h)=>s+fcFunction(h.id,k),0);
+        const ft=fp+ff; const cur=(k===mk);
+        return `<tr class="border-b last:border-0 ${cur?'bg-cyan-50/60':''}">
+          <td class="py-2 font-medium">${monthLabel(k)} ${cur?'<span class="badge bg-cyan-100 text-cyan-800 ml-1">เดือนนี้</span>':''}</td>
+          <td class="text-right font-semibold" style="color:var(--pos)">${fmtMoney(oh)}</td>
+          <td class="text-right">${fp?fmtMoney(fp):'<span class="text-slate-300">—</span>'}</td>
+          <td class="text-right">${ff?fmtMoney(ff):'<span class="text-slate-300">—</span>'}</td>
+          <td class="text-right font-semibold">${fmtMoney(ft)}</td>
+          <td class="text-right text-slate-700">${fmtMoney(oh+ft)}</td>
+        </tr>`;
+      }).join("")}
+      <tr class="border-t-2 font-semibold" style="background:#f8fafc;">
+        <td class="py-2">รวมทั้งปี</td>
+        <td class="text-right" style="color:var(--pos)">${fmtMoney(secured)}</td>
+        <td class="text-right">${fmtMoney(HOTELS.reduce((s,h)=>s+ym.reduce((t,k)=>t+fcPipeline(h.id,k),0),0))}</td>
+        <td class="text-right">${fmtMoney(HOTELS.reduce((s,h)=>s+ym.reduce((t,k)=>t+fcFunction(h.id,k),0),0))}</td>
+        <td class="text-right">${fmtMoney(groupForecastYear(yr))}</td>
+        <td class="text-right">${fmtMoney(projected)}</td>
+      </tr>
+      </tbody>
+    </table></div>
+    <div class="mt-3 text-sm text-slate-600">รวมคาดการณ์ทั้งปี <b>${fmtMoney(projected)}</b> คิดเป็น <b>${pctProjected.toFixed(0)}%</b> ของเป้า ${fmtMoney(TARGET)} (ยืนยันแล้ว ${pctSecured.toFixed(0)}%)</div>
+  </div>`;
+}
+
+// ---------- SINGLE HOTEL (read-only) ----------
+function renderHotelDashboard(hid,hotel){
+  const mk = currentMonthKey();
+  const pipeline = pipelineForHotel(hid);
+  const openPipeline = pipeline.filter(p=>p.stage!=="won" && p.stage!=="lost");
+  const corp = openPipeline.filter(p=>p.dealType==="corporate_room");
+  const fnp = openPipeline.filter(p=>p.dealType==="function");
+  const accounts = accountsForHotel(hid);
+  const functions = functionsForHotel(hid);
+  const activeFunctions = functions.filter(f=>f.status!=="completed" && f.status!=="cancelled");
+  const activities = activitiesForHotel(hid).slice(0,12);
+
+  const stages = ["lead","quoted","negotiation","won"];
+  const stageData = stages.map(st=>({ st, count: pipeline.filter(p=>p.stage===st).length,
+    value: sumVal(pipeline.filter(p=>p.stage===st),"estValue") }));
+  const maxStage = Math.max(1, ...stageData.map(s=>s.value));
+
+  return `
+  <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+    ${kpiCard("On Hand เดือนนี้", fmtM(onHandForMonth(hid,mk)), "ยืนยัน/ปิดแล้ว", G.onhand)}
+    ${kpiCard("Forecast เดือนนี้", fmtM(fcTotal(hid,mk)), "Pipeline + Function", G.forecast)}
+    ${kpiCard("Corporate Pipeline", fmtM(sumVal(corp,"estValue")), `${corp.length} ดีลเปิดอยู่`, G.pipeline)}
+    ${hotel.features.functionRoom ? kpiCard("Function Pipeline", fmtM(sumVal(fnp,"estValue")), `${fnp.length} ดีลเปิดอยู่`, G.warn)
+        : kpiCard("Function", "ไม่มีบริการ", "โรงแรมนี้ไม่รับงาน Function", G.neutral)}
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
+    <div class="card p-4 lg:col-span-1">
+      <div class="section-title mb-3">Pipeline แยกตามเซลล์</div>
+      <canvas id="chart-${hid}" height="200"></canvas>
+    </div>
+    <div class="card p-4 lg:col-span-2">
+      <div class="section-title mb-3">Pipeline ที่กำลังตาม — แยกตามขั้นตอน (Stage)</div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 mt-1">
+        ${stageData.map(s=>`
+          <div>
+            <div class="flex justify-between text-sm mb-1">
+              <span class="font-medium text-slate-700">${PIPELINE_STAGES[s.st]} <span class="text-slate-400">(${s.count})</span></span>
+              <span class="font-semibold">${fmtMoney(s.value)}</span>
+            </div>
+            <div class="stage-bar"><div style="height:100%;width:${s.value/maxStage*100}%;background:${STAGE_ACCENT[s.st]};border-radius:9999px;"></div></div>
+          </div>`).join("")}
+      </div>
+    </div>
+  </div>
+
+  <div class="card p-4 mb-6">
+    <div class="section-title mb-3">On Hand & Forecast (6 เดือนข้างหน้า)</div>
+    <div class="overflow-x-auto"><table class="w-full text-sm">
+      <thead><tr class="text-left text-slate-500 border-b">
+        <th class="py-1">เดือน</th><th class="text-right">On Hand</th>
+        <th class="text-right">Forecast Pipeline</th><th class="text-right">Forecast Function</th>
+        <th class="text-right">Forecast รวม</th><th class="text-right">ส่วนต่าง</th>
+      </tr></thead>
+      <tbody>
+      ${next6Months().map((k,i)=>{
+        const oh=onHandForMonth(hid,k), fp=fcPipeline(hid,k), ff=fcFunction(hid,k), ft=fp+ff, diff=oh-ft;
+        const isNext=i===1;
+        return `<tr class="border-b last:border-0 ${isNext?'bg-cyan-50/60':''}">
+          <td class="py-2 font-medium">${monthLabel(k)} ${isNext?'<span class="badge bg-cyan-100 text-cyan-800 ml-1">เดือนถัดไป</span>':''}</td>
+          <td class="text-right font-semibold" style="color:var(--pos)">${fmtMoney(oh)}</td>
+          <td class="text-right">${fp?fmtMoney(fp):'<span class="text-slate-300">—</span>'}</td>
+          <td class="text-right">${ff?fmtMoney(ff):'<span class="text-slate-300">—</span>'}</td>
+          <td class="text-right font-semibold">${fmtMoney(ft)}</td>
+          <td class="text-right ${diff>=0?'text-teal-600':'text-rose-500'}">${(diff>=0?'+':'')+fmtMoney(diff)}</td>
+        </tr>`;
+      }).join("")}
+      </tbody>
+    </table></div>
+    <div class="text-xs text-slate-400 mt-2">On Hand คำนวณอัตโนมัติจากดีลที่ปิดได้ (Won) และงาน Function ที่ยืนยัน/ส่ง BEO/จบงาน · Forecast มาจากที่ฝ่ายขายกรอกไว้ (ปรับที่มุมมองฝ่ายขาย)</div>
+  </div>
+
+  <div class="card p-4 mb-6">
+    <div class="section-title mb-3">Corporate Account ของโรงแรมนี้</div>
+    <div class="overflow-x-auto"><table class="w-full text-sm">
+      <thead><tr class="text-left text-slate-500 border-b"><th class="py-1">ชื่อบริษัท</th><th>ผู้ติดต่อ</th><th>เบอร์โทร</th><th>สถานะ</th><th>Room Nights</th><th>ติดต่อล่าสุด</th><th>เซลล์</th></tr></thead>
+      <tbody>
+      ${accounts.map(a=>`
+        <tr class="border-b last:border-0">
+          <td class="py-1.5">${a.name}</td><td>${a.contactPerson||"-"}</td><td>${a.phone||"-"}</td>
+          <td>${accountBadge(a.status)}</td><td>${a.roomNightsMTD}</td>
+          <td>${a.lastContactDate}${a.lastContactTopic?`<div class="text-xs text-slate-400">${a.lastContactTopic}</div>`:""}</td>
+          <td>${salesById(a.salesId)?.name||"-"}</td>
+        </tr>`).join("") || `<tr><td class="py-2 text-slate-400" colspan="7">ยังไม่มี Account</td></tr>`}
+      </tbody>
+    </table></div>
+  </div>
+
+  ${hotel.features.functionRoom ? `
+  <div class="card p-4 mb-6">
+    <div class="section-title mb-3">งาน Function ที่กำลังดำเนินการ</div>
+    <div class="overflow-x-auto"><table class="w-full text-sm">
+      <thead><tr class="text-left text-slate-500 border-b"><th class="py-1">ลูกค้า/งาน</th><th>วันงาน</th><th>Pax</th><th>มูลค่า</th><th>สถานะ</th><th>เซลล์ผู้ดูแล</th></tr></thead>
+      <tbody>
+      ${activeFunctions.map(f=>`
+        <tr class="border-b last:border-0">
+          <td class="py-1.5">${f.clientName}${ONHAND_FN_STATUS.includes(f.status)?'<span class="link-tag">On Hand</span>':""}</td>
+          <td>${f.eventDate} ${daysDiff(f.eventDate)>=0&&daysDiff(f.eventDate)<=2?'<span class="text-rose-500">(อีก '+daysDiff(f.eventDate)+' วัน)</span>':''}</td>
+          <td>${f.paxCount}</td><td>${fmtMoney(f.estRevenue)}</td>
+          <td>${functionBadge(f.status)}</td><td>${salesById(f.salesId)?.name||"-"}</td>
+        </tr>`).join("") || `<tr><td class="py-2 text-slate-400" colspan="6">ยังไม่มีงาน Function</td></tr>`}
+      </tbody>
+    </table></div>
+  </div>` : ""}
+
+  <div class="card p-4">
+    <div class="section-title mb-3">Activity Feed — สิ่งที่เซลล์ทำล่าสุดในโรงแรมนี้</div>
+    <div class="overflow-x-auto"><table class="w-full text-sm">
+      <thead><tr class="text-left text-slate-500 border-b"><th class="py-1">วันที่</th><th>เซลล์</th><th>ประเภท</th><th>Account/งาน</th><th>บันทึก</th></tr></thead>
+      <tbody>
+      ${activities.map(a=>`
+        <tr class="border-b last:border-0">
+          <td class="py-1.5">${a.date}</td><td>${salesById(a.salesId)?.name||"-"}</td>
+          <td>${ACTIVITY_TYPES[a.type]||a.type}</td><td>${a.accountName||"-"}</td>
+          <td class="text-slate-500">${a.notes||""}</td>
+        </tr>`).join("") || `<tr><td class="py-2 text-slate-400" colspan="5">ยังไม่มีกิจกรรม</td></tr>`}
+      </tbody>
+    </table></div>
+  </div>`;
+}
+
+// ============================================================
+// OWNER VIEW — ยอดขายรวมทุกช่องทาง (เน้นกราฟ อ่านง่าย)
+// ============================================================
+function ownerKpiSub(pct, note){
+  if(pct===null || pct===undefined || !isFinite(pct)) return note || "ยังไม่มีข้อมูลปีก่อน";
+  const up = pct>=0, col = up ? "#bbf7d0" : "#fecaca";
+  return `<span style="color:${col};font-weight:800">${up?'▲':'▼'} ${Math.abs(pct).toFixed(0)}%</span> ${note||"เทียบปีก่อน"}`;
+}
+function renderOwnerView(){
+  if(!ui.ownerYear) ui.ownerYear = new Date().getFullYear();
+  let scope = ui.ownerTab;
+  if(scope!=="group" && !hotelById(scope)){ ui.ownerTab="group"; scope="group"; }
+  const y = ui.ownerYear, py = y-1;
+  const scopeName = scope==="group" ? "ภาพรวมทุกโรงแรม" : hotelById(scope).name;
+
+  // years available to pick (จาก db.years + ปีที่มีข้อมูลยอดขายจริง)
+  const revYears = db.revenue.map(r=>Number(r.month.slice(0,4)));
+  const yearsSel = [...new Set([...db.years, ...revYears])].sort((a,b)=>a-b);
+
+  const monthsData   = revMonthsWithData(scope,y);
+  const curYearSoFar = revScopeYear(scope,y);
+  const lastYearSame = revSumMonths(scope,py,monthsData);
+  const lastYearFull = revScopeYear(scope,py);
+  const yoy = pctChange(curYearSoFar, lastYearSame);
+
+  const latestM   = monthsData.length ? monthsData[monthsData.length-1] : Number(currentMonthKey().slice(5,7));
+  const latestVal = scope==="group" ? revGroupMonth(monthKey(y,latestM))  : revHotelMonth(scope,monthKey(y,latestM));
+  const latestPrv = scope==="group" ? revGroupMonth(monthKey(py,latestM)) : revHotelMonth(scope,monthKey(py,latestM));
+  const latestYoy = pctChange(latestVal, latestPrv);
+
+  const chTotals = REVENUE_CH_KEYS.map(k=>({ k, v:revScopeYearChannel(scope,y,k) })).sort((a,b)=>b.v-a.v);
+  const topCh = chTotals[0] || { k:"ota", v:0 };
+  const topChPct = curYearSoFar ? Math.round(topCh.v/curYearSoFar*100) : 0;
+
+  const up = yoy!==null && isFinite(yoy) && yoy>=0;
+  const summary = (yoy===null || !isFinite(yoy))
+    ? `ปีนี้ทำได้ <b>${fmtMoney(curYearSoFar)}</b> — ยังไม่มีข้อมูลปีก่อนไว้เทียบ (กรอกยอดปี ${py+543} เพื่อเทียบได้)`
+    : `ปีนี้ (ถึง ${monthLabel(monthKey(y,latestM))}) ทำได้ <b>${fmtMoney(curYearSoFar)}</b> — <span style="color:${up?'#0f766e':'#be123c'};font-weight:800">${up?'มากกว่า':'น้อยกว่า'}ช่วงเดียวกันปีก่อน ${Math.abs(yoy).toFixed(0)}%</span> (ปีก่อน ${fmtMoney(lastYearSame)})`;
+
+  // best month (สำหรับกล่องสรุปฝั่งขวาเมื่อดูรายโรงแรม)
+  const arr = revMonthlyArray(scope,y);
+  let bi=-1, bv=-1; arr.forEach((v,i)=>{ if(v>bv){ bv=v; bi=i; } });
+  const bestMonthTxt = bv>0 ? `${THAI_MONTHS[bi]} ${y+543}` : "—";
+
+  const tabs = `
+  <div class="flex flex-wrap items-center gap-2 mb-5">
+    <div class="flex flex-wrap gap-1 bg-slate-200/60 rounded-full p-1 w-fit">
+      <button onclick="setOwnerTab('group')" class="tab-pill px-4 py-2 rounded-full text-sm ${scope==='group'?'active':''}">ภาพรวมทุกโรงแรม</button>
+      ${HOTELS.map(h=>`<button onclick="setOwnerTab('${h.id}')" class="tab-pill px-4 py-2 rounded-full text-sm ${scope===h.id?'active':''}">${h.name}</button>`).join("")}
+    </div>
+  </div>`;
+
+  return `
+  ${tabs}
+  ${db.revenue.length===0 ? `<div class="rounded-2xl p-4 mb-5 border" style="background:#f0f9ff;border-color:#bae6fd;color:#075985;"><b>ยังไม่มีข้อมูลยอดขาย</b> — กดปุ่ม “＋ กรอกยอดขาย” มุมขวา เพื่อเริ่มบันทึกยอดแต่ละเดือนของแต่ละโรงแรม</div>`:""}
+
+  <div class="flex flex-wrap items-center justify-between gap-3 mb-5">
+    <div>
+      <div class="text-2xl font-bold text-slate-800">ยอดขายรวม — ${scopeName}</div>
+      <div class="text-sm text-slate-500">รวมทุกช่องทาง: OTA · FIT · Walk-in · Corporate · อื่นๆ</div>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="text-sm text-slate-500">ปี</span>
+      <select onchange="setOwnerYear(this.value)" class="btn btn-ghost text-sm px-3 py-2">
+        ${yearsSel.map(yy=>`<option value="${yy}" ${yy===y?"selected":""}>พ.ศ. ${yy+543}</option>`).join("")}
+      </select>
+      <button onclick="openRevenueModal()" class="qbtn-solid" style="background:#0e7490"><span class="qi">＋</span> กรอกยอดขาย</button>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+    ${kpiCard("ยอดขายรวมสะสม ปี "+(y+543), fmtM(curYearSoFar), ownerKpiSub(yoy,"เทียบช่วงเดียวกันปีก่อน"), G.onhand)}
+    ${kpiCard("เดือนล่าสุด ("+THAI_MONTHS[latestM-1]+")", fmtM(latestVal), ownerKpiSub(latestYoy,"เทียบเดือนเดียวกันปีก่อน"), G.pipeline)}
+    ${kpiCard("ทั้งปีที่แล้ว ("+(py+543)+")", fmtM(lastYearFull), "ยอดรวม 12 เดือน", G.forecast)}
+    ${kpiCard("ช่องทางหลักปีนี้", REVENUE_CHANNELS[topCh.k], fmtMoney(topCh.v)+" · "+topChPct+"% ของทั้งหมด", G.account)}
+  </div>
+
+  <div class="card p-5 mb-6">
+    <div class="section-title mb-1">ยอดขายรวมรายเดือน — ปีนี้ เทียบ ปีที่แล้ว</div>
+    <div class="text-sm text-slate-600 mb-3">${summary}</div>
+    <canvas id="own-monthly" height="230"></canvas>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-2">
+    <div class="card p-5">
+      <div class="section-title mb-1">สัดส่วนยอดขายตามช่องทาง — ปี ${y+543}</div>
+      <div class="text-xs text-slate-400 mb-2">ยอดรวมทั้งปี ${fmtMoney(curYearSoFar)}</div>
+      <canvas id="own-donut" height="240"></canvas>
+    </div>
+    ${scope==="group" ? `
+    <div class="card p-5">
+      <div class="section-title mb-1">เทียบรายโรงแรม — ปีนี้ vs ปีที่แล้ว</div>
+      <div class="text-xs text-slate-400 mb-2">ยาวกว่า = ยอดสูงกว่า</div>
+      <canvas id="own-hotels" height="260"></canvas>
+    </div>` : `
+    <div class="card p-5">
+      <div class="section-title mb-3">สรุปสั้น ๆ — ${scopeName}</div>
+      <div class="space-y-3 text-slate-700">
+        <div class="flex items-center gap-3"><span class="text-2xl">🏆</span><div><div class="text-xs text-slate-400">เดือนที่ทำยอดสูงสุดปีนี้</div><div class="text-lg font-bold">${bestMonthTxt} · ${fmtMoney(bv>0?bv:0)}</div></div></div>
+        <div class="flex items-center gap-3"><span class="text-2xl">⭐</span><div><div class="text-xs text-slate-400">ช่องทางที่ทำรายได้มากสุด</div><div class="text-lg font-bold">${REVENUE_CHANNELS[topCh.k]} · ${topChPct}%</div></div></div>
+        <div class="flex items-center gap-3"><span class="text-2xl">${up?'📈':'📉'}</span><div><div class="text-xs text-slate-400">เทียบช่วงเดียวกันปีก่อน</div><div class="text-lg font-bold" style="color:${up?'#0f766e':'#be123c'}">${(yoy===null||!isFinite(yoy))?'—':(up?'+':'')+yoy.toFixed(0)+'%'}</div></div></div>
+      </div>
+    </div>`}
+  </div>
+  <div class="text-xs text-slate-400 mb-6">ฝ่ายบัญชีอัปเดตยอดจริงแต่ละช่องทางได้ที่ปุ่ม “＋ กรอกยอดขาย” (เลือกโรงแรมและเดือน) · ข้อมูลจะรวมและวาดกราฟให้อัตโนมัติ</div>
+  `;
+}
+
+function drawOwnerCharts(){
+  const y = ui.ownerYear || new Date().getFullYear(), py = y-1, scope = ui.ownerTab;
+  const moneyTick = { ticks:{ callback:v=>fmtM(v) } };
+  const c1 = document.getElementById("own-monthly");
+  if(c1){
+    window.__chartRefs["own-monthly"] = new Chart(c1.getContext("2d"),{
+      type:"bar",
+      data:{ labels:THAI_MONTHS, datasets:[
+        { label:"ปีนี้ ("+(y+543)+")", data:revMonthlyArray(scope,y), backgroundColor:"#0e7490", borderRadius:6 },
+        { label:"ปีที่แล้ว ("+(py+543)+")", data:revMonthlyArray(scope,py), backgroundColor:"#cbd5e1", borderRadius:6 }
+      ]},
+      options:{ plugins:{ legend:{ position:"top" }, tooltip:{ callbacks:{ label:ctx=>ctx.dataset.label+": "+fmtMoney(ctx.parsed.y) } } },
+        scales:{ y:{ beginAtZero:true, ...moneyTick } } }
+    });
+  }
+  const c2 = document.getElementById("own-donut");
+  if(c2){
+    window.__chartRefs["own-donut"] = new Chart(c2.getContext("2d"),{
+      type:"doughnut",
+      data:{ labels:REVENUE_CH_KEYS.map(k=>REVENUE_CHANNELS[k]),
+        datasets:[{ data:REVENUE_CH_KEYS.map(k=>revScopeYearChannel(scope,y,k)),
+          backgroundColor:REVENUE_CH_KEYS.map(k=>REVENUE_CH_COLOR[k]), borderWidth:2, borderColor:"#fff" }] },
+      options:{ cutout:"58%", plugins:{ legend:{ position:"right" },
+        tooltip:{ callbacks:{ label:ctx=>ctx.label+": "+fmtMoney(ctx.parsed) } } } }
+    });
+  }
+  const c3 = document.getElementById("own-hotels");
+  if(c3){
+    window.__chartRefs["own-hotels"] = new Chart(c3.getContext("2d"),{
+      type:"bar",
+      data:{ labels:HOTELS.map(h=>h.name.replace("Plaai ","")), datasets:[
+        { label:"ปีนี้", data:HOTELS.map(h=>revHotelYear(h.id,y)), backgroundColor:"#0e7490", borderRadius:6 },
+        { label:"ปีที่แล้ว", data:HOTELS.map(h=>revHotelYear(h.id,py)), backgroundColor:"#cbd5e1", borderRadius:6 }
+      ]},
+      options:{ indexAxis:"y", plugins:{ legend:{ position:"top" },
+        tooltip:{ callbacks:{ label:ctx=>ctx.dataset.label+": "+fmtMoney(ctx.parsed.x) } } },
+        scales:{ x:{ beginAtZero:true, ...moneyTick } } }
+    });
+  }
+}
+
+// ---------- CHARTS ----------
+function drawHotelCharts(hid){
+  const canvas = document.getElementById("chart-"+hid);
+  if (canvas){
+    const reps = SALES_REPS;
+    const values = reps.map(r=>sumVal(pipelineForHotel(hid).filter(p=>p.salesId===r.id && p.stage!=="won" && p.stage!=="lost"),"estValue"));
+    window.__chartRefs["chart-"+hid] = new Chart(canvas.getContext("2d"),{
+      type:"bar",
+      data:{ labels:reps.map(r=>r.name), datasets:[{ label:"Pipeline (฿)", data:values, backgroundColor:"#0e7490", borderRadius:6 }] },
+      options:{ plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true } } }
+    });
+  }
+}
+function drawGroupCharts(){
+  const mk = currentMonthKey();
+  const c = document.getElementById("grp-onhand");
+  if (c){
+    window.__chartRefs["grp-onhand"] = new Chart(c.getContext("2d"),{
+      type:"bar",
+      data:{ labels:HOTELS.map(h=>h.name.replace("Plaai ","")),
+        datasets:[
+          { label:"On Hand", data:HOTELS.map(h=>onHandForMonth(h.id,mk)), backgroundColor:"#0f766e", borderRadius:5 },
+          { label:"Forecast", data:HOTELS.map(h=>fcTotal(h.id,mk)), backgroundColor:"#7dd3fc", borderRadius:5 }
+        ] },
+      options:{ plugins:{ legend:{ position:"bottom" } }, scales:{ y:{ beginAtZero:true } } }
+    });
+  }
+}
+
+// ============================================================
+// STATE SETTERS
+// ============================================================
+function setRole(role){ ui.role=role; render(); }
+function setSalesRep(id){ ui.currentSales=id; ui.salesHotel=null; render(); }
+function setHotelTab(id){ ui.currentHotelTab=id; render(); }
+function setSalesHotel(id){ ui.salesHotel=id; render(); }
+function setYear(y){ ui.year=Number(y); render(); }
+function setOwnerTab(id){ ui.ownerTab=id; render(); }
+function setOwnerYear(y){ ui.ownerYear=Number(y); render(); }
+function addYear(){ const mx=Math.max.apply(null,db.years); db.years.push(mx+1); ui.year=mx+1; saveData(); render(); }
+function setToday(v){ ui.today = v || null; render(); }
+
+// ============================================================
+// DELETE HANDLERS
+// ============================================================
+function deletePipeline(id){ if(!confirm("ลบรายการ Pipeline นี้?"))return; db.pipeline=db.pipeline.filter(p=>p.id!==id); saveData(); render(); }
+function deleteFunction(id){ if(!confirm("ลบงาน Function นี้?"))return; db.functionEvents=db.functionEvents.filter(f=>f.id!==id); saveData(); render(); }
+function deleteActivity(id){ if(!confirm("ลบกิจกรรมนี้?"))return; db.activities=db.activities.filter(a=>a.id!==id); saveData(); render(); }
+function deleteAccount(id){ if(!confirm("ลบ Account นี้?"))return; db.accounts=db.accounts.filter(a=>a.id!==id); saveData(); render(); }
+
+// ============================================================
+// MODALS
+// ============================================================
+function modalShell(title,bodyHtml,onSubmitFn,extraFooter){
+  return `
+  <div class="fixed inset-0 modal-backdrop flex items-center justify-center z-50" onclick="if(event.target===this) closeModal()">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto">
+      <div class="px-5 py-4 border-b flex justify-between items-center">
+        <div class="font-semibold text-lg text-slate-800">${title}</div>
+        <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700">✕</button>
+      </div>
+      <form id="modalForm" class="px-5 py-4 space-y-3" onsubmit="return false;">
+        ${bodyHtml}
+        <div class="pt-2 flex justify-between items-center gap-2">
+          <div>${extraFooter||""}</div>
+          <div class="flex gap-2">
+            <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm rounded-lg border">ยกเลิก</button>
+            <button type="button" onclick="${onSubmitFn}()" class="btn btn-primary px-4 py-2 text-sm">บันทึก</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>`;
+}
+function closeModal(){ document.getElementById("modalRoot").innerHTML=""; flushPendingRender(); }
+function hotelOptions(sel){ return HOTELS.map(h=>`<option value="${h.id}" ${h.id===sel?"selected":""}>${h.name}</option>`).join(""); }
+function salesOptions(sel){ return SALES_REPS.map(s=>`<option value="${s.id}" ${s.id===sel?"selected":""}>${s.name}</option>`).join(""); }
+const inputCls = "w-full border border-slate-200 rounded-lg px-2 py-1.5 mt-1 shadow-sm focus:outline-none focus:ring-2 focus:ring-cyan-200";
+
+// ---- Activity ----
+function openActivityModal(preset){
+  preset = preset||{};
+  const body = `
+    <label class="block text-sm">วันที่<input type="date" id="f_date" value="${todayStr()}" class="${inputCls}"/></label>
+    <label class="block text-sm">เซลล์<select id="f_sales" class="${inputCls}">${salesOptions(ui.currentSales)}</select></label>
+    <label class="block text-sm">โรงแรม<select id="f_hotel" class="${inputCls}">${hotelOptions(preset.hotelId||ui.salesHotel||HOTELS[0].id)}</select></label>
+    <label class="block text-sm">ประเภทกิจกรรม<select id="f_type" class="${inputCls}">${Object.entries(ACTIVITY_TYPES).map(([k,v])=>`<option value="${k}">${v}</option>`).join("")}</select></label>
+    <label class="block text-sm">Account/ชื่องาน<input id="f_account" value="${escAttr(preset.accountName||"")}" class="${inputCls}" placeholder="เช่น บริษัท ABC จำกัด"/></label>
+    <label class="block text-sm">บันทึกเพิ่มเติม<textarea id="f_notes" class="${inputCls}" rows="2"></textarea></label>`;
+  document.getElementById("modalRoot").innerHTML = modalShell("Log Activity", body, "submitActivity");
+}
+function submitActivity(){
+  db.activities.unshift({ id:uid("act"), date:val("f_date"), salesId:val("f_sales"), hotelId:val("f_hotel"),
+    type:val("f_type"), accountName:val("f_account"), notes:val("f_notes") });
+  saveData(); closeModal(); render();
+}
+function quickLogFor(hotelId,accountName){ openActivityModal({ hotelId, accountName }); }
+
+// ---- Pipeline ----
+function openPipelineModal(id,presetHotelId){
+  const ex = id ? db.pipeline.find(p=>p.id===id) : null;
+  const body = `
+    <label class="block text-sm">โรงแรม<select id="f_hotel" class="${inputCls}">${hotelOptions(ex?ex.hotelId:(presetHotelId||ui.salesHotel||HOTELS[0].id))}</select></label>
+    <label class="block text-sm">เซลล์ผู้ดูแล<select id="f_sales" class="${inputCls}">${salesOptions(ex?ex.salesId:ui.currentSales)}</select></label>
+    <label class="block text-sm">ชื่อ Account / งาน<input id="f_account" value="${escAttr(ex?ex.accountName:"")}" class="${inputCls}"/></label>
+    <label class="block text-sm">ประเภทดีล<select id="f_dealtype" class="${inputCls}">
+      <option value="corporate_room" ${ex&&ex.dealType==='corporate_room'?'selected':''}>Corporate Room</option>
+      <option value="function" ${ex&&ex.dealType==='function'?'selected':''}>Function</option>
+    </select></label>
+    <label class="block text-sm">มูลค่าประเมิน (บาท)<input type="number" id="f_value" value="${ex?ex.estValue:''}" class="${inputCls}"/></label>
+    <label class="block text-sm">Stage<select id="f_stage" class="${inputCls}">${Object.entries(PIPELINE_STAGES).map(([k,v])=>`<option value="${k}" ${ex&&ex.stage===k?'selected':''}>${v}</option>`).join("")}</select></label>
+    <label class="block text-sm">คาดว่าจะปิดวันที่<input type="date" id="f_close" value="${ex?ex.expectedCloseDate:''}" class="${inputCls}"/></label>
+    <input type="hidden" id="f_id" value="${ex?ex.id:''}"/>`;
+  const footer = ex ? `<button type="button" onclick="deletePipeline('${ex.id}'); closeModal();" class="text-rose-500 text-xs">ลบรายการนี้</button>` : "";
+  document.getElementById("modalRoot").innerHTML = modalShell(ex?"แก้ไข Pipeline Deal":"เพิ่ม Pipeline Deal", body, "submitPipeline", footer);
+}
+function submitPipeline(){
+  const id = val("f_id");
+  const data = { hotelId:val("f_hotel"), salesId:val("f_sales"), accountName:val("f_account"),
+    dealType:val("f_dealtype"), estValue:Number(val("f_value"))||0, stage:val("f_stage"), expectedCloseDate:val("f_close") };
+  if(id){ Object.assign(db.pipeline.find(p=>p.id===id), data); } else { db.pipeline.unshift({ id:uid("pl"), ...data }); }
+  saveData(); closeModal(); render();
+}
+
+// ---- Function ----
+function openFunctionModal(id,presetHotelId){
+  const ex = id ? db.functionEvents.find(f=>f.id===id) : null;
+  const fnHotels = HOTELS.filter(h=>h.features.functionRoom);
+  const selHotel = ex ? ex.hotelId : (presetHotelId || (fnHotels.find(h=>h.id===ui.salesHotel)?ui.salesHotel:fnHotels[0].id));
+  const body = `
+    <label class="block text-sm">โรงแรม<select id="f_hotel" class="${inputCls}">${fnHotels.map(h=>`<option value="${h.id}" ${h.id===selHotel?"selected":""}>${h.name}</option>`).join("")}</select></label>
+    <label class="block text-sm">เซลล์ผู้ดูแล<select id="f_sales" class="${inputCls}">${salesOptions(ex?ex.salesId:ui.currentSales)}</select></label>
+    <label class="block text-sm">ชื่อลูกค้า/งาน<input id="f_client" value="${escAttr(ex?ex.clientName:"")}" class="${inputCls}"/></label>
+    <label class="block text-sm">ประเภทงาน<input id="f_eventtype" value="${escAttr(ex?ex.eventType:"")}" class="${inputCls}" placeholder="เช่น สัมมนา, งานเลี้ยง"/></label>
+    <label class="block text-sm">วันจัดงาน<input type="date" id="f_eventdate" value="${ex?ex.eventDate:''}" class="${inputCls}"/></label>
+    <label class="block text-sm">จำนวนคน (Pax)<input type="number" id="f_pax" value="${ex?ex.paxCount:''}" class="${inputCls}"/></label>
+    <label class="block text-sm">มูลค่าประเมิน (บาท)<input type="number" id="f_revenue" value="${ex?ex.estRevenue:''}" class="${inputCls}"/></label>
+    <label class="block text-sm">สถานะ<select id="f_status" class="${inputCls}">${Object.entries(FUNCTION_STATUS).map(([k,v])=>`<option value="${k}" ${ex&&ex.status===k?'selected':''}>${v}</option>`).join("")}</select></label>
+    <input type="hidden" id="f_id" value="${ex?ex.id:''}"/>`;
+  const footer = ex ? `<button type="button" onclick="deleteFunction('${ex.id}'); closeModal();" class="text-rose-500 text-xs">ลบรายการนี้</button>` : "";
+  document.getElementById("modalRoot").innerHTML = modalShell(ex?"แก้ไขงาน Function":"เพิ่มงาน Function", body, "submitFunction", footer);
+}
+function submitFunction(){
+  const id = val("f_id");
+  const data = { hotelId:val("f_hotel"), salesId:val("f_sales"), clientName:val("f_client"),
+    eventType:val("f_eventtype"), eventDate:val("f_eventdate"), paxCount:Number(val("f_pax"))||0,
+    estRevenue:Number(val("f_revenue"))||0, status:val("f_status") };
+  if(id){ Object.assign(db.functionEvents.find(f=>f.id===id), data); } else { db.functionEvents.unshift({ id:uid("fn"), beoSentDate:"", ...data }); }
+  saveData(); closeModal(); render();
+}
+
+// ---- Account ----
+function openAccountModal(id,presetHotelId){
+  const ex = id ? db.accounts.find(a=>a.id===id) : null;
+  const body = `
+    <label class="block text-sm">ชื่อบริษัท<input id="f_name" value="${escAttr(ex?ex.name:"")}" class="${inputCls}"/></label>
+    <label class="block text-sm">โรงแรมที่เกี่ยวข้อง<select id="f_hotel" class="${inputCls}">${hotelOptions(ex?ex.hotelIds[0]:(presetHotelId||ui.salesHotel||HOTELS[0].id))}</select></label>
+    <label class="block text-sm">เซลล์ผู้ดูแล<select id="f_sales" class="${inputCls}">${salesOptions(ex?ex.salesId:ui.currentSales)}</select></label>
+    <label class="block text-sm">ผู้ติดต่อ<input id="f_contact" value="${escAttr(ex?ex.contactPerson:"")}" class="${inputCls}" placeholder="ชื่อผู้ติดต่อฝั่งลูกค้า"/></label>
+    <label class="block text-sm">เบอร์โทร<input id="f_phone" value="${escAttr(ex?ex.phone:"")}" class="${inputCls}" placeholder="08x-xxx-xxxx"/></label>
+    <label class="block text-sm">สถานะ<select id="f_status" class="${inputCls}">${Object.entries(ACCOUNT_STATUS).map(([k,v])=>`<option value="${k}" ${ex&&ex.status===k?'selected':''}>${v}</option>`).join("")}</select></label>
+    <label class="block text-sm">Room Nights เดือนนี้<input type="number" id="f_roomnights" value="${ex?ex.roomNightsMTD:0}" class="${inputCls}"/></label>
+    <label class="block text-sm">Contract Rate (บาท)<input type="number" id="f_rate" value="${ex?ex.contractRate:''}" class="${inputCls}"/></label>
+    <label class="block text-sm">ติดต่อล่าสุดวันที่<input type="date" id="f_lastcontact" value="${ex?ex.lastContactDate:todayStr()}" class="${inputCls}"/></label>
+    <label class="block text-sm">เรื่องที่ติดต่อล่าสุด<textarea id="f_lasttopic" class="${inputCls}" rows="2" placeholder="เช่น เสนอราคาห้องพักปีหน้า">${ex?ex.lastContactTopic||"":""}</textarea></label>
+    <input type="hidden" id="f_id" value="${ex?ex.id:''}"/>`;
+  const footer = ex ? `<button type="button" onclick="deleteAccount('${ex.id}'); closeModal();" class="text-rose-500 text-xs">ลบ Account นี้</button>` : "";
+  document.getElementById("modalRoot").innerHTML = modalShell(ex?"แก้ไข Account":"เพิ่ม Account", body, "submitAccount", footer);
+}
+function submitAccount(){
+  const id = val("f_id");
+  const data = { name:val("f_name"), hotelIds:[val("f_hotel")], salesId:val("f_sales"),
+    contactPerson:val("f_contact"), phone:val("f_phone"), status:val("f_status"),
+    roomNightsMTD:Number(val("f_roomnights"))||0, contractRate:Number(val("f_rate"))||0,
+    lastContactDate:val("f_lastcontact"), lastContactTopic:val("f_lasttopic") };
+  if(id){ Object.assign(db.accounts.find(a=>a.id===id), data); } else { db.accounts.unshift({ id:uid("acc"), ...data }); }
+  saveData(); closeModal(); render();
+}
+
+// ---- Annual target ----
+function openTargetModal(year){
+  const body = `
+    <label class="block text-sm">เป้ายอดขายทั้งปี — พ.ศ. ${year+543} (บาท)
+      <input type="number" id="f_target" value="${targetFor(year)}" class="${inputCls}"/></label>
+    <div class="text-xs text-slate-400">ค่าเริ่มต้น ${fmtMoney(DEFAULT_ANNUAL_TARGET)} · แต่ละปีตั้งเป้าแยกกันได้</div>
+    <input type="hidden" id="f_year" value="${year}"/>`;
+  document.getElementById("modalRoot").innerHTML = modalShell("แก้ไขเป้าทั้งปี", body, "submitTarget");
+}
+function submitTarget(){
+  const y = Number(val("f_year"));
+  db.targets = db.targets || {};
+  db.targets[y] = Number(val("f_target"))||0;
+  saveData(); closeModal(); render();
+}
+
+// ---- Hotel (add / edit / delete) ----
+const HOTEL_ACCENTS = ["#0e7490","#0f766e","#155e75","#0369a1","#334155","#7c3aed","#b45309","#be123c","#0891b2","#047857"];
+function openHotelModal(id){
+  const ex = id ? hotelById(id) : null;
+  const curAccent = ex ? ex.accent : HOTEL_ACCENTS[HOTELS.length % HOTEL_ACCENTS.length];
+  const swatches = HOTEL_ACCENTS.map(c=>`<button type="button" onclick="pickAccent('${c}')" data-accent="${c}"
+        class="accent-swatch" style="width:26px;height:26px;border-radius:8px;background:${c};border:2px solid ${c===curAccent?'#0f2233':'transparent'};"></button>`).join("");
+  const body = `
+    <label class="block text-sm">ชื่อโรงแรม<input id="f_name" value="${escAttr(ex?ex.name:"")}" class="${inputCls}" placeholder="เช่น Plaai Plus พัทยา"/></label>
+    <label class="block text-sm">คำอธิบาย / บริการ<input id="f_sub" value="${escAttr(ex?ex.sub:"")}" class="${inputCls}" placeholder="เช่น ห้องอาหาร • บาร์ • ห้องประชุม/Function"/></label>
+    <div class="text-sm">สีประจำโรงแรม
+      <div class="flex flex-wrap gap-2 mt-1" id="accentRow">${swatches}</div>
+      <input type="hidden" id="f_accent" value="${curAccent}"/>
+    </div>
+    <label class="flex items-center gap-2 text-sm mt-1">
+      <input type="checkbox" id="f_fnroom" ${(!ex || ex.features.functionRoom)?'checked':''}/> รับงาน Function (มีห้องประชุม/จัดเลี้ยง)
+    </label>
+    <input type="hidden" id="f_id" value="${ex?ex.id:''}"/>`;
+  const footer = ex ? `<button type="button" onclick="deleteHotel('${ex.id}')" class="text-rose-500 text-xs">ลบโรงแรมนี้</button>` : "";
+  document.getElementById("modalRoot").innerHTML = modalShell(ex?"แก้ไขโรงแรม":"เพิ่มโรงแรมใหม่", body, "submitHotel", footer);
+}
+function pickAccent(c){
+  const el = document.getElementById("f_accent"); if(el) el.value=c;
+  document.querySelectorAll("#accentRow .accent-swatch").forEach(b=>{
+    b.style.border = "2px solid " + (b.dataset.accent===c ? "#0f2233" : "transparent");
+  });
+}
+function submitHotel(){
+  const id = val("f_id");
+  const name = val("f_name").trim();
+  if(!name){ alert("กรุณากรอกชื่อโรงแรม"); return; }
+  const data = { name, sub:val("f_sub"), accent:val("f_accent")||"#0e7490",
+    features:{ functionRoom:document.getElementById("f_fnroom").checked, otaOnly:false } };
+  if(id){ Object.assign(hotelById(id), data); }
+  else { db.hotels.push({ id:uid("hotel"), ...data }); }
+  saveData(); closeModal(); render();
+}
+function deleteHotel(id){
+  if(db.hotels.length<=1){ alert("ต้องมีโรงแรมอย่างน้อย 1 แห่ง"); return; }
+  const used = db.pipeline.some(p=>p.hotelId===id) || db.functionEvents.some(f=>f.hotelId===id)
+    || db.accounts.some(a=>(a.hotelIds||[]).includes(id)) || db.activities.some(a=>a.hotelId===id)
+    || db.forecasts.some(f=>f.hotelId===id);
+  if(used){ alert("ลบไม่ได้ เพราะยังมีข้อมูล (Pipeline / Function / Account / กิจกรรม / Forecast) ผูกกับโรงแรมนี้อยู่\n\nกรุณาย้ายหรือลบข้อมูลเหล่านั้นก่อน"); return; }
+  if(!confirm("ลบโรงแรมนี้?")) return;
+  db.hotels = db.hotels.filter(h=>h.id!==id);
+  syncLookups();
+  if(ui.currentHotelTab===id) ui.currentHotelTab="group";
+  saveData(); closeModal(); render();
+}
+
+// ---- Sales rep (add / edit / delete) ----
+function openSalesModal(id){
+  const ex = id ? salesById(id) : null;
+  const body = `
+    <label class="block text-sm">ชื่อฝ่ายขาย<input id="f_name" value="${escAttr(ex?ex.name:"")}" class="${inputCls}" placeholder="เช่น เซลล์ 4 หรือ ชื่อพนักงาน"/></label>
+    <input type="hidden" id="f_id" value="${ex?ex.id:''}"/>`;
+  const footer = ex ? `<button type="button" onclick="deleteSales('${ex.id}')" class="text-rose-500 text-xs">ลบเซลล์คนนี้</button>` : "";
+  document.getElementById("modalRoot").innerHTML = modalShell(ex?"แก้ไขฝ่ายขาย":"เพิ่มฝ่ายขายใหม่", body, "submitSales", footer);
+}
+function submitSales(){
+  const id = val("f_id");
+  const name = val("f_name").trim();
+  if(!name){ alert("กรุณากรอกชื่อฝ่ายขาย"); return; }
+  if(id){ Object.assign(salesById(id), { name }); }
+  else { const nid=uid("s"); db.salesReps.push({ id:nid, name }); ui.currentSales=nid; }
+  saveData(); closeModal(); render();
+}
+function deleteSales(id){
+  if(db.salesReps.length<=1){ alert("ต้องมีฝ่ายขายอย่างน้อย 1 คน"); return; }
+  const used = db.pipeline.some(p=>p.salesId===id) || db.functionEvents.some(f=>f.salesId===id)
+    || db.accounts.some(a=>a.salesId===id) || db.activities.some(a=>a.salesId===id);
+  if(used){ alert("ลบไม่ได้ เพราะยังมีข้อมูล (Pipeline / Function / Account / กิจกรรม) ผูกกับเซลล์คนนี้อยู่\n\nกรุณาย้ายหรือลบข้อมูลเหล่านั้นก่อน"); return; }
+  if(!confirm("ลบเซลล์คนนี้?")) return;
+  db.salesReps = db.salesReps.filter(s=>s.id!==id);
+  syncLookups();
+  if(ui.currentSales===id) ui.currentSales = db.salesReps[0].id;
+  saveData(); closeModal(); render();
+}
+
+// ============================================================
+// WEEKLY SUMMARY — สรุปยอดขายประจำสัปดาห์ (ส่งเข้า LINE)
+// ============================================================
+function thaiFullDate(d){ return d.getDate()+" "+THAI_MONTHS[d.getMonth()]+" "+(d.getFullYear()+543); }
+// สร้างข้อความสรุป (รูปแบบเดียวกับที่ Edge Function ส่งอัตโนมัติ)
+function buildWeeklySummary(){
+  const now = new Date();
+  const y = now.getFullYear(), py = y-1;
+  const mk = currentMonthKey();
+  const monthsData = revMonthsWithData("group", y);
+  const ytd = revGroupYear(y);
+  const lastSame = revSumMonths("group", py, monthsData);
+  const yoy = pctChange(ytd, lastSame);
+  const arrow = (yoy===null||!isFinite(yoy)) ? "—" : (yoy>=0 ? "▲ "+yoy.toFixed(0)+"%" : "▼ "+Math.abs(yoy).toFixed(0)+"%");
+  const monthRev = revGroupMonth(mk);
+  const oh = groupOnHand(mk), fc = groupForecast(mk);
+  const target = targetFor(y), securedYr = groupOnHandYear(y);
+  const pctTarget = target ? Math.round(securedYr/target*100) : 0;
+
+  let s = "";
+  s += "📊 สรุปยอดขายประจำสัปดาห์\n";
+  s += "Plaai Group • ณ " + thaiFullDate(now) + "\n\n";
+  s += "━━ ภาพรวมทั้งกลุ่ม ━━\n";
+  s += "💰 ยอดขายรวมปีนี้ (สะสม): " + fmtMoney(ytd) + "\n";
+  s += "   เทียบช่วงเดียวกันปีก่อน " + arrow + " (ปีก่อน " + fmtMoney(lastSame) + ")\n";
+  s += "📅 เดือนนี้ (" + monthLabel(mk) + ")\n";
+  s += "   • ยอดขายรวมทุกช่องทาง: " + fmtMoney(monthRev) + "\n";
+  s += "   • On Hand (ยืนยันแล้ว): " + fmtMoney(oh) + "\n";
+  s += "   • Forecast (Pipeline+Function): " + fmtMoney(fc) + "\n";
+  s += "🎯 เทียบเป้าทั้งปี: " + fmtMoney(securedYr) + " / " + fmtMoney(target) + " (" + pctTarget + "%)\n\n";
+  s += "━━ ช่องทาง (ปีนี้สะสม) ━━\n";
+  s += REVENUE_CH_KEYS.map(k=>REVENUE_CHANNELS[k]+" "+fmtMoney(revGroupYearChannel(y,k))).join("\n") + "\n\n";
+  s += "━━ รายโรงแรม (เดือนนี้) ━━\n";
+  HOTELS.forEach(h=>{
+    s += "• " + h.name + "\n";
+    s += "   ขาย " + fmtMoney(revHotelMonth(h.id,mk)) + " | OnHand " + fmtMoney(onHandForMonth(h.id,mk)) + " | FC " + fmtMoney(fcTotal(h.id,mk)) + "\n";
+  });
+  s += "\n— ส่งจากระบบ Plaai Sales Ops";
+  return s;
+}
+function showWeeklySummary(){
+  const text = buildWeeklySummary();
+  const canSend = !!(CLOUD && LINE_SUMMARY_FUNCTION_URL);
+  const esc = text.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  document.getElementById("modalRoot").innerHTML = `
+  <div class="fixed inset-0 modal-backdrop flex items-center justify-center z-50" onclick="if(event.target===this) closeModal()">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+      <div class="px-5 py-4 border-b flex justify-between items-center">
+        <div class="font-semibold text-lg text-slate-800">สรุปยอดขายประจำสัปดาห์</div>
+        <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700">✕</button>
+      </div>
+      <div class="px-5 py-4 space-y-3">
+        <div class="text-xs text-slate-400">ตัวอย่างข้อความที่จะส่งเข้า LINE — คัดลอกไปวางเอง ดาวน์โหลด หรือกดส่งเข้ากลุ่มได้เลย</div>
+        <textarea id="weeklyText" readonly rows="16" class="w-full border border-slate-200 rounded-lg px-3 py-2" style="font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.5;white-space:pre;overflow:auto;">${esc}</textarea>
+        <div id="weeklyMsg" class="text-xs min-h-[16px]"></div>
+        <div class="flex flex-wrap justify-end gap-2 pt-1">
+          <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm rounded-lg border">ปิด</button>
+          <button type="button" onclick="downloadWeekly()" class="btn btn-ghost px-4 py-2 text-sm">ดาวน์โหลด .txt</button>
+          <button type="button" onclick="copyWeekly()" class="btn btn-ghost px-4 py-2 text-sm">คัดลอกข้อความ</button>
+          ${canSend ? `<button type="button" onclick="sendWeeklyToLine(this)" class="btn btn-primary px-4 py-2 text-sm">📤 ส่งเข้า LINE เลย</button>` : ""}
+        </div>
+        ${canSend ? "" : `<div class="text-xs text-slate-400">* ปุ่มส่งเข้า LINE จะใช้ได้เมื่อตั้งค่า Edge Function แล้ว (ดูคู่มือ LINE)</div>`}
+      </div>
+    </div>
+  </div>`;
+}
+function copyWeekly(){
+  const t = document.getElementById("weeklyText"); if(!t) return;
+  const done = ()=>{ const m=document.getElementById("weeklyMsg"); if(m){ m.textContent="คัดลอกแล้ว ✓"; m.style.color="#0f766e"; } };
+  try{ navigator.clipboard.writeText(t.value).then(done, ()=>{ t.select(); document.execCommand("copy"); done(); }); }
+  catch(e){ t.select(); document.execCommand("copy"); done(); }
+}
+function downloadWeekly(){
+  const t = document.getElementById("weeklyText"); if(!t) return;
+  const blob = new Blob([t.value], { type:"text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href=url; a.download="plaai_weekly_"+realToday()+".txt"; a.click(); URL.revokeObjectURL(url);
+}
+async function sendWeeklyToLine(btn){
+  const msg = document.getElementById("weeklyMsg");
+  if(!sb){ if(msg){ msg.textContent="ต้องเชื่อมต่อคลาวด์ก่อนจึงจะส่งได้"; msg.style.color="#be123c"; } return; }
+  if(btn){ btn.disabled=true; btn.textContent="กำลังส่ง..."; }
+  try{
+    const { data:{ session } } = await sb.auth.getSession();
+    const res = await fetch(LINE_SUMMARY_FUNCTION_URL, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+(session?session.access_token:SUPABASE_ANON_KEY) },
+      body: JSON.stringify({ mode:"send" })
+    });
+    if(!res.ok) throw new Error("HTTP "+res.status+" "+(await res.text()));
+    if(msg){ msg.textContent="ส่งเข้า LINE เรียบร้อย ✓"; msg.style.color="#0f766e"; }
+  }catch(e){
+    if(msg){ msg.textContent="ส่งไม่สำเร็จ: "+(e.message||e); msg.style.color="#be123c"; }
+  }finally{ if(btn){ btn.disabled=false; btn.textContent="📤 ส่งเข้า LINE เลย"; } }
+}
+
+// ---- Revenue (ยอดขายรวมรายเดือน 5 ช่องทาง) ----
+function openRevenueModal(presetHotel,presetMonth){
+  const hid = presetHotel || (ui.ownerTab!=="group" && hotelById(ui.ownerTab) ? ui.ownerTab : HOTELS[0].id);
+  const month = presetMonth || currentMonthKey();
+  const ex = revEntry(hid,month);
+  const chInputs = REVENUE_CH_KEYS.map(k=>`
+    <label class="block text-sm">${REVENUE_CHANNELS[k]} (บาท)
+      <input type="number" min="0" id="f_${k}" value="${ex?(Number(ex[k])||0):''}" class="${inputCls}" placeholder="0" oninput="updateRevTotal()"/></label>`).join("");
+  const body = `
+    <div class="grid grid-cols-2 gap-2">
+      <label class="block text-sm">โรงแรม<select id="f_hotel" class="${inputCls}" onchange="reloadRevenueModal()">${hotelOptions(hid)}</select></label>
+      <label class="block text-sm">เดือน<input type="month" id="f_month" value="${month}" class="${inputCls}" onchange="reloadRevenueModal()"/></label>
+    </div>
+    <div class="text-xs text-slate-400">กรอกยอดจริงของแต่ละช่องทางในเดือนที่เลือก (เว้นว่าง = 0)</div>
+    ${chInputs}
+    <div class="rounded-lg px-3 py-2 mt-1 flex justify-between items-center" style="background:#ecfeff;">
+      <span class="text-sm text-slate-600">รวมทั้งเดือน</span>
+      <span id="revTotal" class="text-lg font-bold" style="color:#0e7490">${fmtMoney(ex?revHotelMonth(hid,month):0)}</span>
+    </div>`;
+  const footer = ex ? `<button type="button" onclick="deleteRevenue('${hid}','${month}')" class="text-rose-500 text-xs">ล้างข้อมูลเดือนนี้</button>` : "";
+  document.getElementById("modalRoot").innerHTML = modalShell("กรอก/แก้ไขยอดขายรวมรายเดือน", body, "submitRevenue", footer);
+}
+function reloadRevenueModal(){ openRevenueModal(val("f_hotel"), val("f_month")); }
+function updateRevTotal(){
+  const t = REVENUE_CH_KEYS.reduce((s,k)=>s+(Number(val("f_"+k))||0),0);
+  const el = document.getElementById("revTotal"); if(el) el.textContent = fmtMoney(t);
+}
+function submitRevenue(){
+  const hid = val("f_hotel"), month = val("f_month");
+  if(!month){ alert("กรุณาเลือกเดือน"); return; }
+  const data = {}; REVENUE_CH_KEYS.forEach(k=>data[k]=Number(val("f_"+k))||0);
+  const e = revEntry(hid,month);
+  if(e){ Object.assign(e,data); }
+  else { db.revenue.push({ id:uid("rev"), hotelId:hid, month, ...data }); }
+  saveData(); closeModal(); render();
+}
+function deleteRevenue(hid,month){
+  if(!confirm("ล้างยอดขายของเดือนนี้?")) return;
+  db.revenue = db.revenue.filter(r=>!(r.hotelId===hid && r.month===month));
+  saveData(); closeModal(); render();
+}
+
+function val(id){ const el=document.getElementById(id); return el?el.value:""; }
+
+// ============================================================
+// EXPORT / IMPORT
+// ============================================================
+function exportData(){
+  const blob = new Blob([JSON.stringify(db,null,2)],{ type:"application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href=url; a.download="plaai_sales_data_"+todayStr()+".json"; a.click(); URL.revokeObjectURL(url);
+}
+function importData(evt){
+  if(!guardEdit()) return;
+  const file = evt.target.files[0]; if(!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try{
+      const parsed = JSON.parse(reader.result);
+      if(!parsed.accounts || !parsed.pipeline) throw new Error("invalid");
+      db = parsed; normalizeData(); saveData(); render(); alert("นำเข้าข้อมูลสำเร็จ");
+    }catch(e){ alert("ไฟล์ไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง"); }
+  };
+  reader.readAsText(file);
+}
+
+// ============================================================
+// AUTH (Supabase) — หน้าเข้าสู่ระบบ
+// ============================================================
+function renderLogin(msg){
+  document.getElementById("app").innerHTML = `
+  <div class="min-h-screen flex items-center justify-center px-4" style="background:linear-gradient(120deg,#0f3a52,#12657f);">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+      <div class="text-lg font-bold text-slate-800">Plaai Group <span class="font-normal text-slate-400">| Sales Ops</span></div>
+      <div class="text-sm text-slate-500 mb-4">เข้าสู่ระบบเพื่ออัปเดตข้อมูลร่วมกัน</div>
+      <label class="block text-sm text-slate-600">อีเมล
+        <input id="login_email" type="email" class="${inputCls}" placeholder="you@company.com" onkeydown="if(event.key==='Enter')doLogin()"/></label>
+      <label class="block text-sm text-slate-600 mt-2">รหัสผ่าน
+        <input id="login_pw" type="password" class="${inputCls}" placeholder="••••••••" onkeydown="if(event.key==='Enter')doLogin()"/></label>
+      <div id="login_err" class="text-xs text-rose-500 mt-2 min-h-[16px]">${msg||""}</div>
+      <button onclick="doLogin()" class="btn btn-primary w-full py-2 mt-2">เข้าสู่ระบบ</button>
+      <div class="text-xs text-slate-400 mt-3">บัญชีผู้ใช้เพิ่มได้จากหน้า Supabase (Authentication &gt; Users) โดยผู้ดูแลระบบ</div>
+    </div>
+  </div>
+  <div id="modalRoot"></div>`;
+}
+async function doLogin(){
+  const email = val("login_email").trim(), password = val("login_pw");
+  const errEl = document.getElementById("login_err");
+  if(!email || !password){ if(errEl) errEl.textContent="กรุณากรอกอีเมลและรหัสผ่าน"; return; }
+  if(errEl) errEl.textContent="กำลังเข้าสู่ระบบ...";
+  try{
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+    if(error){ if(errEl) errEl.textContent="เข้าสู่ระบบไม่สำเร็จ: "+error.message; return; }
+    const { data:{ session } } = await sb.auth.getSession();
+    currentUser = session ? session.user : null;
+    await cloudBootstrap();
+  }catch(e){ if(errEl) errEl.textContent="เกิดข้อผิดพลาด: "+(e.message||e); }
+}
+async function logout(){
+  try{ await sb.auth.signOut(); }catch(e){}
+  currentUser = null; location.reload();
+}
+async function initCloud(){
+  try{
+    const { data:{ session } } = await sb.auth.getSession();
+    if(session){ currentUser = session.user; await cloudBootstrap(); }
+    else { renderLogin(); }
+  }catch(e){
+    console.error(e); renderLogin("เชื่อมต่อระบบไม่สำเร็จ กรุณาลองใหม่");
+  }
+}
+
+// ============================================================
+// INIT
+// ============================================================
+if (CLOUD && sb){
+  initCloud();               // โหมดออนไลน์: ล็อกอินก่อน แล้วดึงข้อมูลจากคลาวด์
+} else {
+  loadData();                // โหมดออฟไลน์: ใช้ข้อมูลในเครื่อง (localStorage)
+  render();
+}
+// เมื่อผู้ใช้พิมพ์เสร็จ (เลิกโฟกัสช่องกรอก) แล้วมีอัปเดตจากทีมค้างอยู่ → รีเฟรชให้เห็นข้อมูลล่าสุด
+document.addEventListener("focusout", ()=>{ setTimeout(flushPendingRender, 150); });
+</script>
+</body>
+</html>
