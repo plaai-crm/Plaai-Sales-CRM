@@ -6,6 +6,7 @@
 <title>Plaai Group — Sales Ops</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" />
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root{
@@ -119,12 +120,20 @@ const EDITOR_EMAILS = [
   "sales1.plaaihotel@p-plaai.com",
   "kunnsiri@gmail.com",
   "rda.plaai@gmail.com",
+  "sales.plusbowin@p-plaai.com",
+  "salesco.plus@p-plaai.com",
 ];
 
 /* URL ของ Supabase Edge Function สำหรับส่งสรุปเข้า LINE (ดูคู่มือ LINE)
    - ถ้าใส่ไว้ ปุ่ม “ส่งเข้า LINE เลย” จะทำงานได้
    - ถ้าเว้นว่าง ยังใช้ปุ่มคัดลอก/ดาวน์โหลดข้อความสรุปได้ตามปกติ           */
 const LINE_SUMMARY_FUNCTION_URL = ""; // เช่น "https://xxxx.functions.supabase.co/weekly-line-summary"
+
+/* URL ของ Supabase Edge Function สำหรับ "ส่งรายงานเซลล์เข้าอีเมล" พร้อมไฟล์แนบ
+   - ถ้าใส่ไว้ ปุ่ม "ส่งเข้าอีเมล" จะส่งอีเมลอัตโนมัติพร้อมไฟล์ Excel แนบ
+   - ถ้าเว้นว่าง ปุ่มจะเปิดโปรแกรมอีเมลในเครื่อง (mailto) พร้อมข้อความสรุป
+     และดาวน์โหลดไฟล์ Excel ให้แนบเองอัตโนมัติ                              */
+const REPORT_EMAIL_FUNCTION_URL = ""; // เช่น "https://xxxx.functions.supabase.co/sales-report-email"
 
 let sb = null;                 // Supabase client
 let currentUser = null;        // ผู้ใช้ที่ล็อกอินอยู่
@@ -292,7 +301,7 @@ function syncLookups(){ HOTELS = db.hotels; SALES_REPS = db.salesReps; }
 function normalizeData(){
   // hotels & sales reps are now persisted; fall back to defaults for old saves
   db.hotels = (db.hotels && db.hotels.length) ? db.hotels.map(h=>({ features:{ functionRoom:true, otaOnly:false }, accent:"#0e7490", sub:"", ...h, features:{ functionRoom:true, otaOnly:false, ...(h.features||{}) } })) : DEFAULT_HOTELS.map(h=>({ ...h, features:{ ...h.features } }));
-  db.salesReps = (db.salesReps && db.salesReps.length) ? db.salesReps : DEFAULT_SALES_REPS.map(s=>({ ...s }));
+  db.salesReps = (db.salesReps && db.salesReps.length) ? db.salesReps.map(s=>({ actionPlan:"", ...s })) : DEFAULT_SALES_REPS.map(s=>({ actionPlan:"", ...s }));
   syncLookups();
   db.accounts = (db.accounts||[]).map(a=>({ contactPerson:"", phone:"", lastContactTopic:"", ...a }));
   db.pipeline = db.pipeline||[]; db.functionEvents = db.functionEvents||[]; db.activities = db.activities||[];
@@ -439,7 +448,8 @@ function setCloudStatus(state){
 }
 
 // ---------- Global UI state ----------
-let ui = { role:"sales", currentSales:"s1", currentHotelTab:"group", salesHotel:null, today:null, year:null, ownerTab:"group", ownerYear:null };
+let ui = { role:"sales", currentSales:"s1", currentHotelTab:"group", salesHotel:null, today:null, year:null, ownerTab:"group", ownerYear:null,
+           page:null, reportRep:"all", reportFrom:null, reportTo:null, reportEmail:"" };
 
 // ---------- data helpers ----------
 function hotelById(id){ return HOTELS.find(h=>h.id===id); }
@@ -531,7 +541,8 @@ function repHotels(sid){
 function render(){
   const app = document.getElementById("app");
   document.body.classList.toggle("readonly", readOnly());
-  const mainView = ui.role==="sales" ? renderSalesView()
+  const mainView = ui.page==="salesReport" ? renderSalesReport()
+                 : ui.role==="sales" ? renderSalesView()
                  : ui.role==="owner" ? renderOwnerView()
                  : renderGMView();
   app.innerHTML = `
@@ -542,7 +553,10 @@ function render(){
     <div id="modalRoot"></div>`;
   if (window.__chartRefs){ Object.values(window.__chartRefs).forEach(c=>c&&c.destroy&&c.destroy()); }
   window.__chartRefs = {};
-  if (ui.role==="gm"){
+  if (ui.page==="salesReport"){
+    /* report page draws its own charts */
+    drawReportChart();
+  } else if (ui.role==="gm"){
     if (ui.currentHotelTab==="group") drawGroupCharts();
     else drawHotelCharts(ui.currentHotelTab);
   } else if (ui.role==="owner"){
@@ -570,6 +584,8 @@ function renderTopBar(){
           <button onclick="setRole('gm')" class="tab-pill px-4 py-1.5 rounded-full ${ui.role==='gm'?'active':'text-cyan-50'}">มุมมองผู้บริหาร</button>
           <button onclick="setRole('owner')" class="tab-pill px-4 py-1.5 rounded-full ${ui.role==='owner'?'active':'text-cyan-50'}">มุมมองเจ้าของ</button>
         </div>
+        <button onclick="openSalesReport()" title="ดึงรายงานฝ่ายขายรายคน (เลือกช่วงวันที่ · Export Excel/CSV · ส่งอีเมล)"
+                class="btn text-xs px-3 py-1.5 font-semibold ${ui.page==='salesReport'?'bg-white text-cyan-800':'bg-white/20 hover:bg-white/30 text-white'}">📄 รายงานเซลล์</button>
         ${readOnly() ? `<span class="text-xs font-semibold px-2 py-1 rounded" style="background:rgba(255,255,255,0.18);color:#fde68a;" title="บัญชีนี้เข้าดูข้อมูลได้อย่างเดียว">👁 ดูอย่างเดียว</span>` : ""}
         ${CLOUD ? `<span id="cloudStatus" class="text-xs" style="color:#a7f3d0;">●</span>` : `<span class="text-xs" style="color:#fde68a;" title="กำลังใช้งานแบบออฟไลน์ในเครื่องนี้">ออฟไลน์</span>`}
         <button onclick="showWeeklySummary()" title="สร้าง/ส่งสรุปยอดขายประจำสัปดาห์เข้า LINE" class="btn text-xs bg-white/20 hover:bg-white/30 text-white px-3 py-1.5">📤 สรุปสัปดาห์</button>
@@ -703,6 +719,17 @@ function renderSalesView(){
         </tbody>
       </table></div>
     </div>
+  </div>
+
+  <div class="card p-4 mt-5" style="border-color:#cffafe;">
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-1">
+      <div class="section-title">แผนงาน/Action Plan ของฉัน (${rep.name})</div>
+      <span class="text-xs text-slate-400">บันทึกอัตโนมัติ · ใช้ในรายงานเซลล์</span>
+    </div>
+    <div class="text-xs text-slate-400 mb-2">พิมพ์แผนงาน/สิ่งที่จะทำต่อ เช่น ปิดดีลบริษัท ABC · โทรหาลูกค้าเก่า · ส่ง BEO งานสัมมนา</div>
+    <textarea ${roDisabled()} rows="3" onchange="saveRepPlan('${sid}',this.value)"
+      class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-200"
+      placeholder="พิมพ์แผนงานถัดไปที่นี่...">${escAttr(rep.actionPlan||"")}</textarea>
   </div>
 
   ${renderSalesForecast(sid, hotels)}
@@ -1692,6 +1719,202 @@ function deleteRevenue(hid,month){
 function val(id){ const el=document.getElementById(id); return el?el.value:""; }
 
 // ============================================================
+// SALES REPORT — รายงานฝ่ายขายรายคน (เลือกช่วงวันที่ · Excel/CSV · อีเมล)
+// ============================================================
+function firstDayOfMonth(){ return todayStr().slice(0,7)+"-01"; }
+function ensureReportDefaults(){
+  if(!ui.reportFrom) ui.reportFrom = firstDayOfMonth();
+  if(!ui.reportTo)   ui.reportTo   = todayStr();
+  if(ui.reportRep!=="all" && !salesById(ui.reportRep)) ui.reportRep = "all";
+}
+function openSalesReport(){ ensureReportDefaults(); ui.page="salesReport"; render(); }
+function closeSalesReport(){ ui.page=null; render(); }
+function setReportRep(v){ ui.reportRep=v; render(); }
+function setReportFrom(v){ ui.reportFrom=v; render(); }
+function setReportTo(v){ ui.reportTo=v; render(); }
+function setReportEmail(v){ ui.reportEmail=v; }
+function reportRepMatch(sid){ return ui.reportRep==="all" || sid===ui.reportRep; }
+function inRange(dateStr){ const d=(dateStr||""); return d && d>=ui.reportFrom && d<=ui.reportTo; }
+
+// ---- data slices for the selected rep + date range ----
+function repActivities(){ return db.activities.filter(a=>reportRepMatch(a.salesId) && inRange(a.date)).sort((a,b)=>a.date.localeCompare(b.date)); }
+function repRoomDeals(){ return db.pipeline.filter(p=>reportRepMatch(p.salesId) && p.dealType==="corporate_room" && p.stage==="won" && inRange(p.expectedCloseDate)); }
+function repFunctionPipeline(){ return db.pipeline.filter(p=>reportRepMatch(p.salesId) && p.dealType==="function" && p.stage==="won" && inRange(p.expectedCloseDate)); }
+function repFunctionEvents(){ return db.functionEvents.filter(f=>reportRepMatch(f.salesId) && ONHAND_FN_STATUS.includes(f.status) && inRange(f.eventDate)); }
+function repOpenPipeline(){ return db.pipeline.filter(p=>reportRepMatch(p.salesId) && p.stage!=="won" && p.stage!=="lost"); }
+function repUpcomingFunctions(){ return db.functionEvents.filter(f=>reportRepMatch(f.salesId) && f.status!=="completed" && f.status!=="cancelled" && daysDiff(f.eventDate)>=0).sort((a,b)=>a.eventDate.localeCompare(b.eventDate)); }
+function repOverdueAccounts(){ return db.accounts.filter(a=>reportRepMatch(a.salesId) && daysDiff(a.lastContactDate)<=-14); }
+
+function roomTotal(){ return sumVal(repRoomDeals(),"estValue"); }
+function functionTotal(){ return sumVal(repFunctionEvents(),"estRevenue") + sumVal(repFunctionPipeline(),"estValue"); }
+function reportGrandTotal(){ return roomTotal()+functionTotal(); }
+function reportRepName(){ return ui.reportRep==="all" ? "ทุกคน (รวมทุกเซลล์)" : (salesById(ui.reportRep)?.name || "-"); }
+function reportPeriodTh(){
+  const f=new Date(ui.reportFrom), t=new Date(ui.reportTo);
+  return thaiFullDate(f)+" – "+thaiFullDate(t);
+}
+
+// ---- auto action plan (สรุปจากข้อมูลที่มี) ----
+function autoActionItems(){
+  const items=[];
+  const nm = sid => salesById(sid)?.name || "-";
+  const pfx = sid => ui.reportRep==="all" ? "["+nm(sid)+"] " : "";
+  repOpenPipeline().sort((a,b)=>(a.expectedCloseDate||"").localeCompare(b.expectedCloseDate||"")).forEach(p=>{
+    items.push(pfx(p.salesId)+"ตามดีล “"+p.accountName+"” ("+hotelById(p.hotelId).name+") — "+PIPELINE_STAGES[p.stage]+" · "+fmtMoney(p.estValue)+(p.expectedCloseDate?" · คาดปิด "+p.expectedCloseDate:""));
+  });
+  repUpcomingFunctions().forEach(f=>{
+    const dd=daysDiff(f.eventDate);
+    const warn = (!ONHAND_FN_STATUS.includes(f.status)) ? " · ยังไม่ยืนยัน" : (f.status==="confirmed"?" · ยังไม่ส่ง BEO":"");
+    items.push(pfx(f.salesId)+"เตรียมงาน “"+f.clientName+"” ("+hotelById(f.hotelId).name+") วันงาน "+f.eventDate+" (อีก "+dd+" วัน) — "+FUNCTION_STATUS[f.status]+warn);
+  });
+  repOverdueAccounts().forEach(a=>{
+    items.push(pfx(a.salesId)+"ติดต่อ Account “"+a.name+"” — เงียบไป "+Math.abs(daysDiff(a.lastContactDate))+" วัน"+(a.lastContactTopic?" (ล่าสุด: "+a.lastContactTopic+")":""));
+  });
+  return items;
+}
+function manualPlanReps(){ return ui.reportRep==="all" ? SALES_REPS.slice() : (salesById(ui.reportRep)?[salesById(ui.reportRep)]:[]); }
+function saveRepPlan(sid,value){ if(readOnly())return; const r=salesById(sid); if(r){ r.actionPlan=value; saveData(); } }
+
+function drawReportChart(){
+  const c=document.getElementById("rep-split"); if(!c) return;
+  window.__chartRefs["rep-split"] = new Chart(c.getContext("2d"),{
+    type:"doughnut",
+    data:{ labels:["ขายห้องพัก (Corporate)","งาน Function"],
+      datasets:[{ data:[roomTotal(),functionTotal()], backgroundColor:["#0369a1","#b45309"], borderWidth:2, borderColor:"#fff" }] },
+    options:{ cutout:"58%", plugins:{ legend:{ position:"bottom" },
+      tooltip:{ callbacks:{ label:ctx=>ctx.label+": "+fmtMoney(ctx.parsed) } } } }
+  });
+}
+
+function renderSalesReport(){
+  ensureReportDefaults();
+  const acts = repActivities();
+  const roomDeals = repRoomDeals();
+  const fnEvents = repFunctionEvents();
+  const fnPipe = repFunctionPipeline();
+  const rTotal=roomTotal(), fTotal=functionTotal(), gTotal=rTotal+fTotal;
+  const autoItems = autoActionItems();
+  const repEmailVal = escAttr(ui.reportEmail||"");
+
+  return `
+  <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+    <div>
+      <div class="text-2xl font-bold text-slate-800">รายงานฝ่ายขายรายคน</div>
+      <div class="text-sm text-slate-500">สรุปกิจกรรมรายวัน · ผลงาน · ยอดขาย (แยกห้องพัก/Function) · แผนงานถัดไป</div>
+    </div>
+    <button onclick="closeSalesReport()" class="btn btn-ghost text-sm px-3 py-1.5">← กลับหน้าหลัก</button>
+  </div>
+
+  <div class="card p-4 mb-5">
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+      <label class="block text-sm">เลือกเซลล์
+        <select onchange="setReportRep(this.value)" class="${inputCls}">
+          <option value="all" ${ui.reportRep==="all"?"selected":""}>ทุกคน (รวมทุกเซลล์)</option>
+          ${SALES_REPS.map(s=>`<option value="${s.id}" ${s.id===ui.reportRep?"selected":""}>${s.name}</option>`).join("")}
+        </select></label>
+      <label class="block text-sm">ตั้งแต่วันที่
+        <input type="date" value="${ui.reportFrom}" max="${ui.reportTo}" onchange="setReportFrom(this.value)" class="${inputCls}"/></label>
+      <label class="block text-sm">ถึงวันที่
+        <input type="date" value="${ui.reportTo}" min="${ui.reportFrom}" onchange="setReportTo(this.value)" class="${inputCls}"/></label>
+      <div class="flex flex-wrap gap-2">
+        <button onclick="exportReportExcel()" class="qbtn-solid" style="background:#0f766e"><span class="qi">⬇</span> Excel</button>
+        <button onclick="exportReportCSV()" class="qbtn-solid" style="background:#0369a1"><span class="qi">⬇</span> CSV</button>
+      </div>
+    </div>
+    <div class="mt-3 flex flex-wrap items-center gap-2 border-t pt-3">
+      <span class="text-sm text-slate-500">ส่งเข้าอีเมล:</span>
+      <input type="email" id="rep_email" value="${repEmailVal}" oninput="setReportEmail(this.value)" placeholder="หัวหน้าเซลล์@company.com"
+             class="border border-slate-200 rounded-lg px-3 py-1.5 text-sm" style="min-width:240px;"/>
+      <button onclick="emailReport()" class="btn btn-primary text-sm px-4 py-1.5">📧 ส่งรายงานเข้าอีเมล</button>
+      <span class="text-xs text-slate-400">${REPORT_EMAIL_FUNCTION_URL ? "ส่งอัตโนมัติพร้อมไฟล์ Excel แนบ" : "จะเปิดโปรแกรมอีเมล + ดาวน์โหลดไฟล์ Excel ให้แนบเอง"}</span>
+    </div>
+  </div>
+
+  <div class="mb-5 flex items-center gap-3">
+    <div class="w-1.5 h-10 rounded-full" style="background:#0e7490;"></div>
+    <div><div class="text-lg font-bold text-slate-800">${reportRepName()}</div>
+    <div class="text-sm text-slate-500">${reportPeriodTh()}</div></div>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+    ${kpiCard("ยอดรวมที่ทำได้ (On Hand)", fmtM(gTotal), "ในช่วงวันที่ที่เลือก", G.onhand)}
+    ${kpiCard("ยอดขายห้องพัก (Corporate)", fmtM(rTotal), roomDeals.length+" ดีลปิดได้", G.pipeline)}
+    ${kpiCard("ยอดงาน Function", fmtM(fTotal), (fnEvents.length+fnPipe.length)+" งานยืนยันแล้ว", G.warn)}
+    ${kpiCard("จำนวนกิจกรรม", acts.length, "ครั้งที่บันทึกไว้", G.account)}
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
+    <div class="card p-4">
+      <div class="section-title mb-3">สัดส่วนยอด: ห้องพัก vs Function</div>
+      ${gTotal>0 ? `<canvas id="rep-split" height="200"></canvas>` : `<div class="text-sm text-slate-400 py-10 text-center">ยังไม่มียอดที่ปิด/ยืนยันในช่วงนี้</div>`}
+    </div>
+    <div class="card p-4 lg:col-span-2">
+      <div class="section-title mb-3">ยอดขายห้องพัก (ดีล Corporate ที่ปิดได้)</div>
+      <div class="overflow-x-auto"><table class="w-full text-sm">
+        <thead><tr class="text-left text-slate-500 border-b"><th class="py-1">วันที่ปิด</th>${ui.reportRep==="all"?"<th>เซลล์</th>":""}<th>Account</th><th>โรงแรม</th><th class="text-right">มูลค่า</th></tr></thead>
+        <tbody>
+        ${roomDeals.map(p=>`<tr class="border-b last:border-0">
+          <td class="py-1.5">${p.expectedCloseDate||"-"}</td>${ui.reportRep==="all"?`<td>${salesById(p.salesId)?.name||"-"}</td>`:""}
+          <td>${p.accountName}</td><td>${hotelById(p.hotelId).name}</td><td class="text-right">${fmtMoney(p.estValue)}</td>
+        </tr>`).join("") || `<tr><td class="py-2 text-slate-400" colspan="${ui.reportRep==="all"?5:4}">ไม่มีดีลห้องพักที่ปิดได้ในช่วงนี้</td></tr>`}
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div class="card p-4 mb-6">
+    <div class="section-title mb-3">งาน Function ที่ยืนยันแล้ว</div>
+    <div class="overflow-x-auto"><table class="w-full text-sm">
+      <thead><tr class="text-left text-slate-500 border-b"><th class="py-1">วันงาน</th>${ui.reportRep==="all"?"<th>เซลล์</th>":""}<th>ลูกค้า/งาน</th><th>โรงแรม</th><th>ประเภท</th><th class="text-right">Pax</th><th class="text-right">มูลค่า</th><th>สถานะ</th></tr></thead>
+      <tbody>
+      ${fnEvents.map(f=>`<tr class="border-b last:border-0">
+        <td class="py-1.5">${f.eventDate}</td>${ui.reportRep==="all"?`<td>${salesById(f.salesId)?.name||"-"}</td>`:""}
+        <td>${f.clientName}</td><td>${hotelById(f.hotelId).name}</td><td>${f.eventType||"-"}</td>
+        <td class="text-right">${f.paxCount||0}</td><td class="text-right">${fmtMoney(f.estRevenue)}</td><td>${functionBadge(f.status)}</td>
+      </tr>`).join("") || `<tr><td class="py-2 text-slate-400" colspan="${ui.reportRep==="all"?8:7}">ไม่มีงาน Function ที่ยืนยันในช่วงนี้</td></tr>`}
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="card p-4 mb-6">
+    <div class="section-title mb-3">กิจกรรมรายวัน — ทำอะไรมาบ้าง / ผลเป็นอย่างไร</div>
+    <div class="overflow-x-auto"><table class="w-full text-sm">
+      <thead><tr class="text-left text-slate-500 border-b"><th class="py-1">วันที่</th>${ui.reportRep==="all"?"<th>เซลล์</th>":""}<th>ประเภท</th><th>โรงแรม</th><th>Account/งาน</th><th>บันทึก/ผล</th></tr></thead>
+      <tbody>
+      ${acts.map(a=>`<tr class="border-b last:border-0 align-top">
+        <td class="py-1.5 whitespace-nowrap">${a.date}</td>${ui.reportRep==="all"?`<td>${salesById(a.salesId)?.name||"-"}</td>`:""}
+        <td class="whitespace-nowrap">${ACTIVITY_TYPES[a.type]||a.type}</td><td>${hotelById(a.hotelId)?.name||"-"}</td>
+        <td>${a.accountName||"-"}</td><td class="text-slate-600">${a.notes||"-"}</td>
+      </tr>`).join("") || `<tr><td class="py-2 text-slate-400" colspan="${ui.reportRep==="all"?6:5}">ไม่มีกิจกรรมในช่วงวันที่นี้</td></tr>`}
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+    <div class="card p-4">
+      <div class="section-title mb-1">Action Plan (สรุปอัตโนมัติจากข้อมูล)</div>
+      <div class="text-xs text-slate-400 mb-3">ดีลที่ยังเปิดอยู่ · งาน Function ที่ใกล้ถึง · Account ที่เงียบนาน</div>
+      ${autoItems.length ? `<ul class="text-sm text-slate-700 space-y-2 list-disc pl-5">${autoItems.map(i=>`<li>${i}</li>`).join("")}</ul>`
+        : `<div class="text-sm text-slate-400">ไม่มีรายการค้าง — เยี่ยมมาก 🎉</div>`}
+    </div>
+    <div class="card p-4">
+      <div class="section-title mb-1">แผนงาน/Next step (กรอกเอง)</div>
+      <div class="text-xs text-slate-400 mb-3">พิมพ์แผนงานถัดไปของเซลล์แต่ละคน — ระบบบันทึกให้อัตโนมัติและนำไปใส่ในรายงาน</div>
+      <div class="space-y-3">
+      ${manualPlanReps().map(r=>`
+        <div>
+          ${ui.reportRep==="all"?`<div class="text-sm font-semibold text-slate-700 mb-1">${r.name}</div>`:""}
+          <textarea ${roDisabled()} rows="4" onchange="saveRepPlan('${r.id}',this.value)"
+            class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-200"
+            placeholder="เช่น ปิดดีลบริษัท ABC ภายในสิ้นเดือน · โทรหาลูกค้าเก่า 5 ราย · ส่ง BEO งานสัมมนา">${escAttr(r.actionPlan||"")}</textarea>
+        </div>`).join("")}
+      </div>
+    </div>
+  </div>
+  `;
+}
+
+// ============================================================
 // EXPORT / IMPORT
 // ============================================================
 function exportData(){
@@ -1699,6 +1922,148 @@ function exportData(){
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href=url; a.download="plaai_sales_data_"+todayStr()+".json"; a.click(); URL.revokeObjectURL(url);
+}
+
+// ---- Sales report exports (Excel / CSV / Email) ----
+function reportFileBase(){
+  const who = ui.reportRep==="all" ? "ทุกคน" : (salesById(ui.reportRep)?.name || "sales");
+  return "plaai_report_"+who.replace(/\s+/g,"")+"_"+ui.reportFrom+"_ถึง_"+ui.reportTo;
+}
+// สร้างข้อมูลรายงานเป็นชุดตาราง (ใช้ร่วมกันทั้ง Excel และ CSV)
+function buildReportTables(){
+  const all = ui.reportRep==="all";
+  const acts = repActivities(), roomDeals = repRoomDeals(), fnEvents = repFunctionEvents();
+  const rTotal=roomTotal(), fTotal=functionTotal(), gTotal=rTotal+fTotal;
+
+  const summary = [
+    ["รายงานฝ่ายขาย — Plaai Group"],
+    ["เซลล์", reportRepName()],
+    ["ช่วงวันที่", ui.reportFrom+" ถึง "+ui.reportTo],
+    ["ออกรายงานเมื่อ", realToday()],
+    [],
+    ["สรุปยอด", "บาท"],
+    ["ยอดขายห้องพัก (Corporate)", rTotal],
+    ["ยอดงาน Function", fTotal],
+    ["ยอดรวมที่ทำได้ (On Hand)", gTotal],
+    ["จำนวนกิจกรรม", acts.length],
+  ];
+
+  const actHead = ["วันที่", ...(all?["เซลล์"]:[]), "ประเภทกิจกรรม", "โรงแรม", "Account/งาน", "บันทึก/ผล"];
+  const actRows = acts.map(a=>["'"+a.date, ...(all?[salesById(a.salesId)?.name||"-"]:[]),
+    ACTIVITY_TYPES[a.type]||a.type, hotelById(a.hotelId)?.name||"-", a.accountName||"-", a.notes||"-"]);
+
+  const roomHead = ["วันที่ปิด", ...(all?["เซลล์"]:[]), "Account", "โรงแรม", "มูลค่า (บาท)", "Stage"];
+  const roomRows = roomDeals.map(p=>["'"+(p.expectedCloseDate||"-"), ...(all?[salesById(p.salesId)?.name||"-"]:[]),
+    p.accountName, hotelById(p.hotelId).name, Number(p.estValue)||0, PIPELINE_STAGES[p.stage]||p.stage]);
+
+  const fnHead = ["วันงาน", ...(all?["เซลล์"]:[]), "ลูกค้า/งาน", "โรงแรม", "ประเภทงาน", "Pax", "มูลค่า (บาท)", "สถานะ"];
+  const fnRows = fnEvents.map(f=>["'"+f.eventDate, ...(all?[salesById(f.salesId)?.name||"-"]:[]),
+    f.clientName, hotelById(f.hotelId).name, f.eventType||"-", Number(f.paxCount)||0, Number(f.estRevenue)||0, FUNCTION_STATUS[f.status]||f.status]);
+
+  const autoItems = autoActionItems();
+  const planRows = [["Action Plan (สรุปอัตโนมัติ)"], ...(autoItems.length?autoItems.map(i=>[i]):[["— ไม่มีรายการค้าง —"]]),
+    [], ["แผนงาน/Next step (กรอกเอง)"], ...manualPlanReps().map(r=>[ (all?r.name+": ":"")+(r.actionPlan||"—") ])];
+
+  return { summary,
+    activities:{ head:actHead, rows:actRows },
+    room:{ head:roomHead, rows:roomRows },
+    functions:{ head:fnHead, rows:fnRows },
+    plan:planRows };
+}
+
+function exportReportExcel(){
+  if(typeof XLSX==="undefined"){ alert("ไลบรารี Excel ยังโหลดไม่เสร็จ กรุณาลองใหม่อีกครั้ง หรือใช้ปุ่ม CSV แทน"); return; }
+  const t = buildReportTables();
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(t.summary), "สรุป");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([t.activities.head, ...t.activities.rows]), "กิจกรรมรายวัน");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([t.room.head, ...t.room.rows]), "ยอดขายห้องพัก");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([t.functions.head, ...t.functions.rows]), "งาน Function");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(t.plan), "Action Plan");
+  XLSX.writeFile(wb, reportFileBase()+".xlsx");
+}
+
+function csvCell(v){
+  let s = (v===null||v===undefined) ? "" : String(v);
+  if(s.charAt(0)==="'") s = s.slice(1); // ตัด marker ที่กันวันที่เพี้ยนใน Excel ออกสำหรับ CSV
+  if(/[",\n]/.test(s)) s = '"'+s.replace(/"/g,'""')+'"';
+  return s;
+}
+function aoaToCsv(aoa){ return aoa.map(row=>row.map(csvCell).join(",")).join("\r\n"); }
+function exportReportCSV(){
+  const t = buildReportTables();
+  const blocks = [];
+  blocks.push(aoaToCsv(t.summary));
+  blocks.push("");
+  blocks.push("=== กิจกรรมรายวัน ===");
+  blocks.push(aoaToCsv([t.activities.head, ...t.activities.rows]));
+  blocks.push("");
+  blocks.push("=== ยอดขายห้องพัก (Corporate) ===");
+  blocks.push(aoaToCsv([t.room.head, ...t.room.rows]));
+  blocks.push("");
+  blocks.push("=== งาน Function ===");
+  blocks.push(aoaToCsv([t.functions.head, ...t.functions.rows]));
+  blocks.push("");
+  blocks.push("=== Action Plan ===");
+  blocks.push(aoaToCsv(t.plan));
+  const csv = "﻿" + blocks.join("\r\n"); // BOM เพื่อให้ Excel อ่านภาษาไทยถูกต้อง
+  const blob = new Blob([csv],{ type:"text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href=url; a.download=reportFileBase()+".csv"; a.click(); URL.revokeObjectURL(url);
+}
+
+function buildReportSummaryText(){
+  const acts = repActivities();
+  let s = "";
+  s += "รายงานฝ่ายขาย — Plaai Group\n";
+  s += "เซลล์: "+reportRepName()+"\n";
+  s += "ช่วงวันที่: "+ui.reportFrom+" ถึง "+ui.reportTo+"\n\n";
+  s += "สรุปยอดที่ทำได้ (On Hand)\n";
+  s += "• ยอดขายห้องพัก (Corporate): "+fmtMoney(roomTotal())+"\n";
+  s += "• ยอดงาน Function: "+fmtMoney(functionTotal())+"\n";
+  s += "• ยอดรวม: "+fmtMoney(reportGrandTotal())+"\n";
+  s += "• จำนวนกิจกรรม: "+acts.length+" ครั้ง\n\n";
+  const auto = autoActionItems();
+  s += "Action Plan (สรุปอัตโนมัติ):\n";
+  s += (auto.length ? auto.slice(0,10).map(i=>"• "+i).join("\n") : "• ไม่มีรายการค้าง")+"\n";
+  s += "\n(รายละเอียดทั้งหมดอยู่ในไฟล์ Excel/CSV ที่แนบมา)";
+  return s;
+}
+
+async function emailReport(){
+  const to = (val("rep_email")||ui.reportEmail||"").trim();
+  if(!to){ alert("กรุณากรอกอีเมลผู้รับก่อน"); return; }
+  const subject = "รายงานฝ่ายขาย "+reportRepName()+" ("+ui.reportFrom+" ถึง "+ui.reportTo+")";
+  const body = buildReportSummaryText();
+
+  // โหมดส่งอัตโนมัติผ่าน Edge Function (พร้อมไฟล์ Excel แนบ)
+  if(REPORT_EMAIL_FUNCTION_URL && sb){
+    try{
+      const wb = XLSX.utils.book_new();
+      const t = buildReportTables();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(t.summary), "สรุป");
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([t.activities.head, ...t.activities.rows]), "กิจกรรมรายวัน");
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([t.room.head, ...t.room.rows]), "ยอดขายห้องพัก");
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([t.functions.head, ...t.functions.rows]), "งาน Function");
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(t.plan), "Action Plan");
+      const b64 = XLSX.write(wb, { bookType:"xlsx", type:"base64" });
+      const { data:{ session } } = await sb.auth.getSession();
+      const res = await fetch(REPORT_EMAIL_FUNCTION_URL, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+(session?session.access_token:SUPABASE_ANON_KEY) },
+        body: JSON.stringify({ to, subject, body, filename:reportFileBase()+".xlsx", attachmentBase64:b64 })
+      });
+      if(!res.ok) throw new Error("HTTP "+res.status+" "+(await res.text()));
+      alert("ส่งรายงานเข้าอีเมล "+to+" เรียบร้อยแล้ว ✓");
+      return;
+    }catch(e){ alert("ส่งอัตโนมัติไม่สำเร็จ: "+(e.message||e)+"\n\nจะเปิดโปรแกรมอีเมลให้แทน"); }
+  }
+
+  // โหมดสำรอง: เปิดโปรแกรมอีเมล (mailto) + ดาวน์โหลดไฟล์ Excel ให้แนบเอง
+  exportReportExcel();
+  const mailto = "mailto:"+encodeURIComponent(to)+"?subject="+encodeURIComponent(subject)+"&body="+encodeURIComponent(body+"\n\n*กรุณาแนบไฟล์ Excel ที่เพิ่งดาวน์โหลด ("+reportFileBase()+".xlsx) ก่อนส่ง");
+  window.location.href = mailto;
 }
 function importData(evt){
   if(!guardEdit()) return;
