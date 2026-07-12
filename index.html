@@ -120,7 +120,7 @@ const EDITOR_EMAILS = [
   "sales1.plaaihotel@p-plaai.com",
   "kunnsiri@gmail.com",
   "rda.plaai@gmail.com",
-  "sales.plusbowin@p-plaai.com",
+  "ales.plusbowin@p-plaai.com",
   "salesco.plus@p-plaai.com",
 ];
 
@@ -218,9 +218,11 @@ const ACCOUNT_COLOR = { active:"bg-teal-100 text-teal-800", new:"bg-sky-100 text
 const STAGE_ACCENT = { lead:"#94a3b8", quoted:"#c2760c", negotiation:"#0284c7", won:"#0f766e" };
 
 // ---- Total revenue by channel (for Owner view) ----
-const REVENUE_CHANNELS = { ota:"OTA", fit:"FIT", walkin:"Walk-in", sales:"Corporate", other:"อื่นๆ" };
-const REVENUE_CH_KEYS = ["ota","fit","walkin","sales","other"];
-const REVENUE_CH_COLOR = { ota:"#0369a1", fit:"#0891b2", walkin:"#0d9488", sales:"#0e7490", other:"#94a3b8" };
+const REVENUE_CHANNELS = { ota:"OTA", fit:"FIT", walkin:"Walk-in", sales:"Corporate", other:"อื่นๆ", lump:"ยอดรวม (ยังไม่แยกช่องทาง)" };
+const REVENUE_CH_KEYS = ["ota","fit","walkin","sales","other","lump"];
+const REVENUE_CH_COLOR = { ota:"#0369a1", fit:"#0891b2", walkin:"#0d9488", sales:"#0e7490", other:"#94a3b8", lump:"#475569" };
+// ช่องทางแบบ "แยกรายละเอียด" (ไม่รวมช่องยอดรวมแบบเหมา)
+const REVENUE_DETAIL_KEYS = ["ota","fit","walkin","sales","other"];
 
 function uid(p){ return p + "_" + Math.random().toString(36).slice(2,9); }
 function realToday(){ return new Date().toISOString().slice(0,10); }
@@ -249,7 +251,7 @@ function genSampleRevenue(hotels, cy){
     const build = (year, month, growth)=>{
       const tot = Math.round(base*season[month-1]*growth/1000)*1000;
       const e = { id:uid("rev"), hotelId:h.id, month:year+"-"+String(month).padStart(2,"0") };
-      REVENUE_CH_KEYS.forEach((k,i)=>{ e[k] = Math.round(tot*mix[i]/1000)*1000; });
+      REVENUE_CH_KEYS.forEach((k,i)=>{ e[k] = Math.round(tot*(mix[i]||0)/1000)*1000; });
       return e;
     };
     for(let m=1;m<=12;m++) rows.push(build(cy-1, m, 1.0));            // ปีที่แล้ว ครบ 12 เดือน
@@ -314,7 +316,7 @@ function normalizeData(){
     return { pipelineForecast:0, functionForecast:0, notes:"", ...f };
   });
   // ยอดขายรวมรายเดือน (5 ช่องทาง) สำหรับหน้าเจ้าของ
-  db.revenue = (db.revenue||[]).map(r=>({ ota:0, fit:0, walkin:0, sales:0, other:0, ...r }));
+  db.revenue = (db.revenue||[]).map(r=>({ ota:0, fit:0, walkin:0, sales:0, other:0, lump:0, ...r }));
   const cy = new Date().getFullYear();
   db.years = (db.years && db.years.length) ? db.years : [cy];
   if(!db.years.includes(cy)) db.years.push(cy);
@@ -1679,13 +1681,18 @@ function openRevenueModal(presetHotel,presetMonth){
   const hid = presetHotel || (ui.ownerTab!=="group" && hotelById(ui.ownerTab) ? ui.ownerTab : HOTELS[0].id);
   const month = presetMonth || currentMonthKey();
   const ex = revEntry(hid,month);
-  const chInputs = REVENUE_CH_KEYS.map(k=>`
+  const chInputs = REVENUE_DETAIL_KEYS.map(k=>`
     <label class="block text-sm">${REVENUE_CHANNELS[k]} (บาท)
       <input type="number" min="0" id="f_${k}" value="${ex?(Number(ex[k])||0):''}" class="${inputCls}" placeholder="0" oninput="updateRevTotal()"/></label>`).join("");
   const body = `
     <div class="grid grid-cols-2 gap-2">
       <label class="block text-sm">โรงแรม<select id="f_hotel" class="${inputCls}" onchange="reloadRevenueModal()">${hotelOptions(hid)}</select></label>
       <label class="block text-sm">เดือน<input type="month" id="f_month" value="${month}" class="${inputCls}" onchange="reloadRevenueModal()"/></label>
+    </div>
+    <div class="rounded-xl p-3 border" style="background:#f0fdfa;border-color:#99f6e4;">
+      <label class="block text-sm font-semibold" style="color:#0f766e;">💰 ยอดขายรวมทั้งเดือน (บาท)
+        <input type="number" min="0" id="f_lump" value="${ex?(Number(ex.lump)||0)||'':''}" class="${inputCls}" placeholder="0" oninput="updateRevTotal()"/></label>
+      <div class="text-xs mt-1" style="color:#0f766e;">ถ้ายังไม่มีข้อมูลแยกช่องทาง กรอกยอดรวมช่องนี้ช่องเดียวได้เลย · ถ้ามีรายละเอียดแล้วให้กรอกแยกด้านล่างแทน (ระบบบวกรวมให้)</div>
     </div>
     <div class="text-xs text-slate-400">กรอกยอดจริงของแต่ละช่องทางในเดือนที่เลือก (เว้นว่าง = 0)</div>
     ${chInputs}
@@ -2128,14 +2135,25 @@ function renderLogin(msg){
   </div>
   <div id="modalRoot"></div>`;
 }
+// แปลงข้อความ error ของ Supabase เป็นภาษาไทยที่เข้าใจง่าย
+function loginErrorTh(error){
+  const code = error.code || "", msg = (error.message||"").toLowerCase();
+  if(code==="invalid_credentials" || msg.includes("invalid login credentials"))
+    return "อีเมลหรือรหัสผ่านไม่ถูกต้อง — ตรวจตัวพิมพ์เล็ก/ใหญ่ของรหัสผ่านอีกครั้ง หรือติดต่อแอดมินเพื่อรีเซ็ตรหัส";
+  if(code==="email_not_confirmed" || msg.includes("email not confirmed"))
+    return "บัญชีนี้ยังไม่ได้ยืนยันอีเมล — กรุณาเปิดอีเมลของคุณแล้วกดลิงก์ยืนยัน หรือแจ้งแอดมินให้กด Confirm ในระบบ";
+  if(msg.includes("network") || msg.includes("fetch"))
+    return "เชื่อมต่ออินเทอร์เน็ต/เซิร์ฟเวอร์ไม่ได้ — ตรวจสัญญาณเน็ตแล้วลองใหม่";
+  return "เข้าสู่ระบบไม่สำเร็จ: "+error.message;
+}
 async function doLogin(){
-  const email = val("login_email").trim(), password = val("login_pw");
+  const email = val("login_email").trim().toLowerCase(), password = val("login_pw");
   const errEl = document.getElementById("login_err");
   if(!email || !password){ if(errEl) errEl.textContent="กรุณากรอกอีเมลและรหัสผ่าน"; return; }
   if(errEl) errEl.textContent="กำลังเข้าสู่ระบบ...";
   try{
     const { error } = await sb.auth.signInWithPassword({ email, password });
-    if(error){ if(errEl) errEl.textContent="เข้าสู่ระบบไม่สำเร็จ: "+error.message; return; }
+    if(error){ if(errEl) errEl.textContent=loginErrorTh(error); return; }
     const { data:{ session } } = await sb.auth.getSession();
     currentUser = session ? session.user : null;
     await cloudBootstrap();
