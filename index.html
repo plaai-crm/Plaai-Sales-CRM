@@ -303,7 +303,7 @@ function daysDiff(dateStr){ const d=new Date(dateStr), t=new Date(todayStr()); r
 function ymKey(dateStr){ return (dateStr||"").slice(0,7); }
 function currentMonthKey(){ return todayStr().slice(0,7); }
 function addMonthsKey(key,n){ let [y,m]=key.split("-").map(Number); m+=n; while(m>12){m-=12;y+=1;} while(m<1){m+=12;y-=1;} return y+"-"+String(m).padStart(2,"0"); }
-function monthLabel(key){ const [y,m]=key.split("-").map(Number); return THAI_MONTHS[m-1]+" "+(y+543); }
+function monthLabel(key){ const [y,m]=key.split("-").map(Number); return THAI_MONTHS[m-1]+" "+y; }
 function next6Months(){ const arr=[]; let k=currentMonthKey(); for(let i=0;i<6;i++){ arr.push(k); k=addMonthsKey(k,1);} return arr; }
 
 // สร้างข้อมูลยอดขายตัวอย่าง (ปีนี้ถึงเดือนปัจจุบัน + ทั้งปีที่แล้ว) เพื่อให้หน้าเจ้าของมีกราฟให้ดูทันที
@@ -320,6 +320,7 @@ function genSampleRevenue(hotels, cy){
       REVENUE_CH_KEYS.forEach((k,i)=>{ e[k] = Math.round(tot*(mix[i]||0)/1000)*1000; });
       return e;
     };
+    for(let m=1;m<=12;m++) rows.push(build(cy-2, m, 0.92));          // 2 ปีก่อน ครบ 12 เดือน
     for(let m=1;m<=12;m++) rows.push(build(cy-1, m, 1.0));            // ปีที่แล้ว ครบ 12 เดือน
     for(let m=1;m<=nowM;m++) rows.push(build(cy, m, 1.08+hi*0.01));   // ปีนี้ ถึงเดือนปัจจุบัน (โต ~8-13%)
   });
@@ -354,7 +355,7 @@ function defaultData(){
       { id:uid("fc"), hotelId:"prime", month:nm, pipelineForecast:320000, functionForecast:120000, notes:"ประเมินจาก Pipeline + งาน Function ที่คาดว่าจะปิด" },
     ],
     revenue: genSampleRevenue(DEFAULT_HOTELS, new Date().getFullYear()),
-    years:[ new Date().getFullYear() ],
+    years:[ new Date().getFullYear()-2, new Date().getFullYear()-1, new Date().getFullYear() ],
     targets:{}
   };
 }
@@ -518,7 +519,7 @@ function setCloudStatus(state){
 }
 
 // ---------- Global UI state ----------
-let ui = { role:"sales", currentSales:"s1", currentHotelTab:"group", salesHotel:null, today:null, year:null, ownerTab:"group", ownerYear:null,
+let ui = { role:"sales", currentSales:"s1", currentHotelTab:"group", salesHotel:null, today:null, year:null, ownerTab:"group", ownerYear:null, ownerYearB:null,
            page:null, reportRep:"all", reportFrom:null, reportTo:null, reportEmail:"" };
 
 // ---------- data helpers ----------
@@ -981,7 +982,7 @@ function renderGroupDashboard(){
     ${kpiCard("On Hand เดือนนี้ (ทั้งกลุ่ม)", fmtM(ohMonth), "ยืนยัน/ปิดแล้ว "+monthLabel(mk), G.onhand)}
     ${kpiCard("Forecast เดือนนี้ (ทั้งกลุ่ม)", fmtM(fcMonth), "Pipeline + Function", G.forecast)}
     ${kpiCard("Pipeline เปิดอยู่ (ทั้งกลุ่ม)", fmtM(sumVal(open,"estValue")), `${open.length} ดีลที่กำลังตาม`, G.pipeline)}
-    ${kpiCard("เป้าทั้งปี พ.ศ. "+(yr+543), fmtM(TARGET), "กดปุ่ม “แก้ไขเป้า” เพื่อปรับ", G.brand)}
+    ${kpiCard("เป้าทั้งปี "+yr, fmtM(TARGET), "กดปุ่ม “แก้ไขเป้า” เพื่อปรับ", G.brand)}
   </div>
 
   <div class="card p-4 mb-6 flex flex-wrap items-center justify-between gap-3">
@@ -991,15 +992,15 @@ function renderGroupDashboard(){
     </div>
     <div class="flex items-center gap-2">
       <select onchange="setYear(this.value)" class="btn btn-ghost text-sm px-3 py-2">
-        ${db.years.slice().sort((a,b)=>a-b).map(y=>`<option value="${y}" ${y===yr?"selected":""}>ปี พ.ศ. ${y+543}</option>`).join("")}
+        ${db.years.slice().sort((a,b)=>a-b).map(y=>`<option value="${y}" ${y===yr?"selected":""}>ปี ${y}</option>`).join("")}
       </select>
-      ${canManage() ? `<button onclick="addYear()" class="btn btn-primary text-sm px-3 py-2">＋ เพิ่มปีถัดไป</button>` : ""}
+      ${canManage() ? `<button onclick="addYear()" class="btn btn-primary text-sm px-3 py-2">＋ เพิ่มปี</button>` : ""}
     </div>
   </div>
 
   <div class="card p-5 mb-6">
     <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
-      <div class="section-title">ความคืบหน้าเทียบเป้าทั้งปี — พ.ศ. ${yr+543}</div>
+      <div class="section-title">ความคืบหน้าเทียบเป้าทั้งปี — ปี ${yr}</div>
       <div class="flex items-center gap-2">
         <div class="text-sm text-slate-500">คาดการณ์รวม <b class="text-slate-700">${fmtMoney(projected)}</b> / เป้า ${fmtMoney(TARGET)}</div>
         ${canManage() ? `<button onclick="openTargetModal(${yr})" class="btn btn-ghost text-xs px-3 py-1.5">✎ แก้ไขเป้า</button>` : ""}
@@ -1067,7 +1068,7 @@ function renderGroupDashboard(){
   </div>
 
   <div class="card p-4 mb-6">
-    <div class="section-title mb-1">ตารางสรุปทั้งปี — พ.ศ. ${yr+543}</div>
+    <div class="section-title mb-1">ตารางสรุปทั้งปี — ปี ${yr}</div>
     <div class="text-xs text-slate-400 mb-3">On Hand คำนวณอัตโนมัติจากงานที่ปิด/ยืนยันแล้ว · Forecast จากที่ฝ่ายขายกรอกไว้ · เทียบเป้า ${fmtMoney(TARGET)}/ปี</div>
     <div class="overflow-x-auto"><table class="w-full text-sm">
       <thead><tr class="text-left text-slate-500 border-b">
@@ -1238,20 +1239,23 @@ function ownerKpiSub(pct, note){
 }
 function renderOwnerView(){
   if(!ui.ownerYear) ui.ownerYear = new Date().getFullYear();
+  if(ui.ownerYearB===null || ui.ownerYearB===undefined) ui.ownerYearB = ui.ownerYear-1;
   let scope = ui.ownerTab;
   if(scope!=="group" && !hotelById(scope)){ ui.ownerTab="group"; scope="group"; }
-  const y = ui.ownerYear, py = y-1;
+  const y = ui.ownerYear, py = ui.ownerYearB;   // y = ปีหลัก · py = ปีที่เลือกมาเทียบ
   const scopeName = scope==="group" ? "ภาพรวมทุกโรงแรม" : hotelById(scope).name;
 
-  // years available to pick (จาก db.years + ปีที่มีข้อมูลยอดขายจริง)
+  // years available to pick (จาก db.years + ปีที่มีข้อมูลยอดขายจริง + ปีที่กำลังเลือกอยู่)
   const revYears = db.revenue.map(r=>Number(r.month.slice(0,4)));
-  const yearsSel = [...new Set([...db.years, ...revYears])].sort((a,b)=>a-b);
+  const yearsSel = [...new Set([...db.years, ...revYears, y, py])].sort((a,b)=>a-b);
 
-  const monthsData   = revMonthsWithData(scope,y);
-  const curYearSoFar = revScopeYear(scope,y);
-  const lastYearSame = revSumMonths(scope,py,monthsData);
-  const lastYearFull = revScopeYear(scope,py);
-  const yoy = pctChange(curYearSoFar, lastYearSame);
+  // เทียบเฉพาะเดือนที่ "ปีหลัก" มีข้อมูล เทียบกับเดือนเดียวกันของ "ปีที่เลือกมาเทียบ"
+  const monthsData    = revMonthsWithData(scope,y);
+  const curYearSoFar  = revScopeYear(scope,y);
+  const cmpSamePeriod = revSumMonths(scope,py,monthsData);   // ปีเทียบ เฉพาะเดือนเดียวกัน
+  const cmpYearFull   = revScopeYear(scope,py);              // ปีเทียบ ครบทั้งปี
+  const yoy = pctChange(curYearSoFar, cmpSamePeriod);
+  const diffBaht = curYearSoFar - cmpSamePeriod;
 
   const latestM   = monthsData.length ? monthsData[monthsData.length-1] : Number(currentMonthKey().slice(5,7));
   const latestVal = scope==="group" ? revGroupMonth(monthKey(y,latestM))  : revHotelMonth(scope,monthKey(y,latestM));
@@ -1262,15 +1266,22 @@ function renderOwnerView(){
   const topCh = chTotals[0] || { k:"ota", v:0 };
   const topChPct = curYearSoFar ? Math.round(topCh.v/curYearSoFar*100) : 0;
 
-  const up = yoy!==null && isFinite(yoy) && yoy>=0;
-  const summary = (yoy===null || !isFinite(yoy))
-    ? `ปีนี้ทำได้ <b>${fmtMoney(curYearSoFar)}</b> — ยังไม่มีข้อมูลปีก่อนไว้เทียบ (กรอกยอดปี ${py+543} เพื่อเทียบได้)`
-    : `ปีนี้ (ถึง ${monthLabel(monthKey(y,latestM))}) ทำได้ <b>${fmtMoney(curYearSoFar)}</b> — <span style="color:${up?'#0f766e':'#be123c'};font-weight:800">${up?'มากกว่า':'น้อยกว่า'}ช่วงเดียวกันปีก่อน ${Math.abs(yoy).toFixed(0)}%</span> (ปีก่อน ${fmtMoney(lastYearSame)})`;
+  // ทิศทางผล: ดีขึ้น / เท่าเดิม / ลดลง — พร้อม % และยอดเงิน (ผู้บริหารถามทั้งสองอย่าง)
+  const hasCmp   = yoy!==null && isFinite(yoy);
+  const flat     = hasCmp && Math.abs(yoy)<0.5;
+  const up       = hasCmp && yoy>0;
+  const dirWord  = !hasCmp ? "" : flat ? "เท่าเดิม" : up ? "ดีขึ้น" : "ลดลง";
+  const dirColor = !hasCmp ? "#64748b" : flat ? "#64748b" : up ? "#0f766e" : "#be123c";
+  const arrow    = flat ? "▬" : up ? "▲" : "▼";
+  const bahtSigned = (diffBaht>=0?"+":"−") + fmtMoney(Math.abs(diffBaht));
+  const summary = !hasCmp
+    ? `ปี ${y} ทำได้ <b>${fmtMoney(curYearSoFar)}</b> — ยังไม่มีข้อมูลปี ${py} ไว้เทียบ (เลือกปีเทียบที่มีข้อมูล หรือกรอกยอดปี ${py} ก่อน)`
+    : `ปี ${y} (ถึงเดือน ${monthLabel(monthKey(y,latestM))}) ทำได้ <b>${fmtMoney(curYearSoFar)}</b> — <span style="color:${dirColor};font-weight:800">${arrow} ${dirWord} ${Math.abs(yoy).toFixed(1)}%</span> เทียบช่วงเดียวกันของปี ${py} <span style="color:${dirColor};font-weight:700">(คิดเป็น ${bahtSigned})</span> · ปี ${py} ช่วงเดียวกันทำได้ ${fmtMoney(cmpSamePeriod)}`;
 
   // best month (สำหรับกล่องสรุปฝั่งขวาเมื่อดูรายโรงแรม)
   const arr = revMonthlyArray(scope,y);
   let bi=-1, bv=-1; arr.forEach((v,i)=>{ if(v>bv){ bv=v; bi=i; } });
-  const bestMonthTxt = bv>0 ? `${THAI_MONTHS[bi]} ${y+543}` : "—";
+  const bestMonthTxt = bv>0 ? `${THAI_MONTHS[bi]} ${y}` : "—";
 
   const tabs = `
   <div class="flex flex-wrap items-center gap-2 mb-5">
@@ -1290,10 +1301,15 @@ function renderOwnerView(){
       <div class="text-sm text-slate-500">รวมทุกช่องทาง: OTA · FIT · Walk-in · Corporate · อื่นๆ</div>
     </div>
     <div class="flex items-center gap-2 flex-wrap">
-      <span class="text-sm text-slate-500">ปี</span>
-      <select onchange="setOwnerYear(this.value)" class="btn btn-ghost text-sm px-3 py-2">
-        ${yearsSel.map(yy=>`<option value="${yy}" ${yy===y?"selected":""}>พ.ศ. ${yy+543}</option>`).join("")}
+      <span class="text-sm text-slate-500">เทียบปี</span>
+      <select onchange="setOwnerYear(this.value)" title="ปีหลัก" class="btn btn-ghost text-sm px-3 py-2" style="font-weight:700">
+        ${yearsSel.map(yy=>`<option value="${yy}" ${yy===y?"selected":""}>ปี ${yy}</option>`).join("")}
       </select>
+      <button onclick="swapOwnerYears()" title="สลับปีที่นำมาเทียบ" class="btn btn-ghost text-sm px-2 py-2">⇄</button>
+      <select onchange="setOwnerYearB(this.value)" title="ปีที่นำมาเทียบ" class="btn btn-ghost text-sm px-3 py-2">
+        ${yearsSel.map(yy=>`<option value="${yy}" ${yy===py?"selected":""}>ปี ${yy}</option>`).join("")}
+      </select>
+      ${canManage() ? `<button onclick="addYear()" title="เพิ่มปีที่ต้องการบันทึกข้อมูล" class="btn btn-ghost text-sm px-3 py-2">＋ เพิ่มปี</button>` : ""}
       <button onclick="exportRevenueExcel()" title="ดาวน์โหลดตัวเลขยอดขายทั้งปีเป็น Excel (แก้ทีเดียวหลายเดือน)" class="qbtn-solid" style="background:#0f766e"><span class="qi">⬇</span> Excel</button>
       <button onclick="exportRevenueCSV()" title="ดาวน์โหลดตัวเลขยอดขายทั้งปีเป็น CSV" class="qbtn-solid" style="background:#0369a1"><span class="qi">⬇</span> CSV</button>
       ${canEditRevenue() ? `<label class="qbtn-solid cursor-pointer" style="background:#7c3aed" title="นำเข้าไฟล์ Excel/CSV เพื่ออัปเดตตัวเลขยอดขายทีเดียวหลายเดือน"><span class="qi">⬆</span> นำเข้าตัวเลข
@@ -1303,36 +1319,48 @@ function renderOwnerView(){
   </div>
 
   <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-    ${kpiCard("ยอดขายรวมสะสม ปี "+(y+543), fmtM(curYearSoFar), ownerKpiSub(yoy,"เทียบช่วงเดียวกันปีก่อน"), G.onhand)}
-    ${kpiCard("เดือนล่าสุด ("+THAI_MONTHS[latestM-1]+")", fmtM(latestVal), ownerKpiSub(latestYoy,"เทียบเดือนเดียวกันปีก่อน"), G.pipeline)}
-    ${kpiCard("ทั้งปีที่แล้ว ("+(py+543)+")", fmtM(lastYearFull), "ยอดรวม 12 เดือน", G.forecast)}
-    ${kpiCard("ช่องทางหลักปีนี้", REVENUE_CHANNELS[topCh.k], fmtMoney(topCh.v)+" · "+topChPct+"% ของทั้งหมด", G.account)}
+    ${kpiCard("ยอดขายรวมสะสม ปี "+y, fmtM(curYearSoFar), ownerKpiSub(yoy,"เทียบช่วงเดียวกันปี "+py)+(hasCmp?` · ${bahtSigned}`:""), G.onhand)}
+    ${kpiCard("เดือนล่าสุด ("+THAI_MONTHS[latestM-1]+" "+y+")", fmtM(latestVal), ownerKpiSub(latestYoy,"เทียบเดือนเดียวกันปี "+py), G.pipeline)}
+    ${kpiCard("ทั้งปี "+py+" (ปีที่เทียบ)", fmtM(cmpYearFull), "ยอดรวม 12 เดือน", G.forecast)}
+    ${kpiCard("ช่องทางหลักปี "+y, REVENUE_CHANNELS[topCh.k], fmtMoney(topCh.v)+" · "+topChPct+"% ของทั้งหมด", G.account)}
   </div>
 
+  ${hasCmp ? `<div class="card p-4 mb-6 flex flex-wrap items-center gap-4" style="border-left:6px solid ${dirColor};">
+    <div class="text-3xl">${flat?'⚖️':up?'📈':'📉'}</div>
+    <div class="flex-1 min-w-[220px]">
+      <div class="text-xs text-slate-400">สรุปเทียบ ปี ${y} กับ ปี ${py} (ช่วงเดียวกัน)</div>
+      <div class="text-xl font-extrabold" style="color:${dirColor}">${dirWord} ${Math.abs(yoy).toFixed(1)}% · ${bahtSigned}</div>
+    </div>
+    <div class="text-right">
+      <div class="text-xs text-slate-400">ปี ${y} / ปี ${py}</div>
+      <div class="text-sm font-semibold text-slate-700">${fmtMoney(curYearSoFar)} / ${fmtMoney(cmpSamePeriod)}</div>
+    </div>
+  </div>` : ""}
+
   <div class="card p-5 mb-6">
-    <div class="section-title mb-1">ยอดขายรวมรายเดือน — ปีนี้ เทียบ ปีที่แล้ว</div>
+    <div class="section-title mb-1">ยอดขายรวมรายเดือน — ปี ${y} เทียบ ปี ${py}</div>
     <div class="text-sm text-slate-600 mb-3">${summary}</div>
     <canvas id="own-monthly" height="230"></canvas>
   </div>
 
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-2">
     <div class="card p-5">
-      <div class="section-title mb-1">สัดส่วนยอดขายตามช่องทาง — ปี ${y+543}</div>
+      <div class="section-title mb-1">สัดส่วนยอดขายตามช่องทาง — ปี ${y}</div>
       <div class="text-xs text-slate-400 mb-2">ยอดรวมทั้งปี ${fmtMoney(curYearSoFar)}</div>
       <canvas id="own-donut" height="240"></canvas>
     </div>
     ${scope==="group" ? `
     <div class="card p-5">
-      <div class="section-title mb-1">เทียบรายโรงแรม — ปีนี้ vs ปีที่แล้ว</div>
+      <div class="section-title mb-1">เทียบรายโรงแรม — ปี ${y} vs ปี ${py}</div>
       <div class="text-xs text-slate-400 mb-2">ยาวกว่า = ยอดสูงกว่า</div>
       <canvas id="own-hotels" height="260"></canvas>
     </div>` : `
     <div class="card p-5">
       <div class="section-title mb-3">สรุปสั้น ๆ — ${scopeName}</div>
       <div class="space-y-3 text-slate-700">
-        <div class="flex items-center gap-3"><span class="text-2xl">🏆</span><div><div class="text-xs text-slate-400">เดือนที่ทำยอดสูงสุดปีนี้</div><div class="text-lg font-bold">${bestMonthTxt} · ${fmtMoney(bv>0?bv:0)}</div></div></div>
+        <div class="flex items-center gap-3"><span class="text-2xl">🏆</span><div><div class="text-xs text-slate-400">เดือนที่ทำยอดสูงสุดปี ${y}</div><div class="text-lg font-bold">${bestMonthTxt} · ${fmtMoney(bv>0?bv:0)}</div></div></div>
         <div class="flex items-center gap-3"><span class="text-2xl">⭐</span><div><div class="text-xs text-slate-400">ช่องทางที่ทำรายได้มากสุด</div><div class="text-lg font-bold">${REVENUE_CHANNELS[topCh.k]} · ${topChPct}%</div></div></div>
-        <div class="flex items-center gap-3"><span class="text-2xl">${up?'📈':'📉'}</span><div><div class="text-xs text-slate-400">เทียบช่วงเดียวกันปีก่อน</div><div class="text-lg font-bold" style="color:${up?'#0f766e':'#be123c'}">${(yoy===null||!isFinite(yoy))?'—':(up?'+':'')+yoy.toFixed(0)+'%'}</div></div></div>
+        <div class="flex items-center gap-3"><span class="text-2xl">${flat?'⚖️':up?'📈':'📉'}</span><div><div class="text-xs text-slate-400">เทียบช่วงเดียวกันปี ${py}</div><div class="text-lg font-bold" style="color:${dirColor}">${!hasCmp?'—':dirWord+' '+Math.abs(yoy).toFixed(1)+'% · '+bahtSigned}</div></div></div>
       </div>
     </div>`}
   </div>
@@ -1341,15 +1369,17 @@ function renderOwnerView(){
 }
 
 function drawOwnerCharts(){
-  const y = ui.ownerYear || new Date().getFullYear(), py = y-1, scope = ui.ownerTab;
+  const y = ui.ownerYear || new Date().getFullYear();
+  const py = (ui.ownerYearB!=null) ? ui.ownerYearB : y-1;
+  const scope = ui.ownerTab;
   const moneyTick = { ticks:{ callback:v=>fmtM(v) } };
   const c1 = document.getElementById("own-monthly");
   if(c1){
     window.__chartRefs["own-monthly"] = new Chart(c1.getContext("2d"),{
       type:"bar",
       data:{ labels:THAI_MONTHS, datasets:[
-        { label:"ปีนี้ ("+(y+543)+")", data:revMonthlyArray(scope,y), backgroundColor:"#0e7490", borderRadius:6 },
-        { label:"ปีที่แล้ว ("+(py+543)+")", data:revMonthlyArray(scope,py), backgroundColor:"#cbd5e1", borderRadius:6 }
+        { label:"ปี "+y, data:revMonthlyArray(scope,y), backgroundColor:"#0e7490", borderRadius:6 },
+        { label:"ปี "+py, data:revMonthlyArray(scope,py), backgroundColor:"#cbd5e1", borderRadius:6 }
       ]},
       options:{ plugins:{ legend:{ position:"top" }, tooltip:{ callbacks:{ label:ctx=>ctx.dataset.label+": "+fmtMoney(ctx.parsed.y) } } },
         scales:{ y:{ beginAtZero:true, ...moneyTick } } }
@@ -1371,8 +1401,8 @@ function drawOwnerCharts(){
     window.__chartRefs["own-hotels"] = new Chart(c3.getContext("2d"),{
       type:"bar",
       data:{ labels:HOTELS.map(h=>h.name.replace("Plaai ","")), datasets:[
-        { label:"ปีนี้", data:HOTELS.map(h=>revHotelYear(h.id,y)), backgroundColor:"#0e7490", borderRadius:6 },
-        { label:"ปีที่แล้ว", data:HOTELS.map(h=>revHotelYear(h.id,py)), backgroundColor:"#cbd5e1", borderRadius:6 }
+        { label:"ปี "+y, data:HOTELS.map(h=>revHotelYear(h.id,y)), backgroundColor:"#0e7490", borderRadius:6 },
+        { label:"ปี "+py, data:HOTELS.map(h=>revHotelYear(h.id,py)), backgroundColor:"#cbd5e1", borderRadius:6 }
       ]},
       options:{ indexAxis:"y", plugins:{ legend:{ position:"top" },
         tooltip:{ callbacks:{ label:ctx=>ctx.dataset.label+": "+fmtMoney(ctx.parsed.x) } } },
@@ -1419,8 +1449,22 @@ function setHotelTab(id){ ui.currentHotelTab=id; render(); }
 function setSalesHotel(id){ ui.salesHotel=id; render(); }
 function setYear(y){ ui.year=Number(y); render(); }
 function setOwnerTab(id){ ui.ownerTab=id; render(); }
-function setOwnerYear(y){ ui.ownerYear=Number(y); render(); }
-function addYear(){ if(!guardManage())return; const mx=Math.max.apply(null,db.years); db.years.push(mx+1); ui.year=mx+1; saveData(); render(); }
+function setOwnerYear(y){ ui.ownerYear=Number(y); if(ui.ownerYearB===ui.ownerYear) ui.ownerYearB=ui.ownerYear-1; render(); }
+function setOwnerYearB(y){ ui.ownerYearB=Number(y); render(); }
+function swapOwnerYears(){ const a=ui.ownerYear, b=ui.ownerYearB; ui.ownerYear=b; ui.ownerYearB=a; render(); }
+function addYear(){
+  if(!guardManage())return;
+  const mx = db.years.length ? Math.max.apply(null,db.years) : new Date().getFullYear();
+  const input = prompt("เพิ่มปีที่ต้องการบันทึกข้อมูล (ค.ศ. เช่น "+(mx+1)+")", String(mx+1));
+  if(input===null) return;                       // กดยกเลิก
+  const yr = parseInt(String(input).trim(),10);
+  if(!yr || yr<2000 || yr>2100){ alert("กรุณากรอกปีเป็น ค.ศ. ระหว่าง 2000–2100"); return; }
+  if(db.years.includes(yr)){ alert("มีปี "+yr+" อยู่แล้ว"); ui.year=yr; ui.ownerYear=yr; render(); return; }
+  db.years.push(yr);
+  db.years = db.years.map(Number).sort((a,b)=>a-b);
+  ui.year=yr; ui.ownerYear=yr;                    // เด้งไปที่ปีที่เพิ่งเพิ่ม
+  saveData(); render();
+}
 function setToday(v){ ui.today = v || null; render(); }
 
 // ============================================================
@@ -1582,7 +1626,7 @@ function submitAccount(){
 // ---- Annual target ----
 function openTargetModal(year){
   const body = `
-    <label class="block text-sm">เป้ายอดขายทั้งปี — พ.ศ. ${year+543} (บาท)
+    <label class="block text-sm">เป้ายอดขายทั้งปี — ปี ${year} (บาท)
       <input type="number" id="f_target" value="${targetFor(year)}" class="${inputCls}"/></label>
     <div class="text-xs text-slate-400">ค่าเริ่มต้น ${fmtMoney(DEFAULT_ANNUAL_TARGET)} · แต่ละปีตั้งเป้าแยกกันได้</div>
     <input type="hidden" id="f_year" value="${year}"/>`;
@@ -1686,7 +1730,7 @@ function deleteSales(id){
 // ============================================================
 // WEEKLY SUMMARY — สรุปยอดขายประจำสัปดาห์ (ส่งเข้า LINE)
 // ============================================================
-function thaiFullDate(d){ return d.getDate()+" "+THAI_MONTHS[d.getMonth()]+" "+(d.getFullYear()+543); }
+function thaiFullDate(d){ return d.getDate()+" "+THAI_MONTHS[d.getMonth()]+" "+d.getFullYear(); }
 // สร้างข้อความสรุป (รูปแบบเดียวกับที่ Edge Function ส่งอัตโนมัติ)
 function buildWeeklySummary(){
   const now = new Date();
@@ -2063,7 +2107,7 @@ function exportRevenueExcel(){
   if(typeof XLSX==="undefined"){ alert("ไลบรารี Excel ยังโหลดไม่เสร็จ กรุณาลองใหม่ หรือใช้ปุ่ม CSV แทน"); return; }
   const y = ui.ownerYear || new Date().getFullYear();
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(revenueRowsForYear(y)), "ยอดขาย "+(y+543));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(revenueRowsForYear(y)), "ยอดขาย "+y);
   XLSX.writeFile(wb, "plaai_ยอดขาย_"+y+".xlsx");
 }
 function exportRevenueCSV(){
