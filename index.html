@@ -111,18 +111,37 @@ const SUPABASE_URL = "https://diffxgsxmztvccebgnol.supabase.co";// <-- วาง
 const SUPABASE_ANON_KEY = "sb_publishable_m9ntF4MgZrk7wbIcXUL5rw_wUQEvWOT";  // <-- วาง anon public key ที่นี่
 const CLOUD = !!(SUPABASE_URL && SUPABASE_ANON_KEY);
 
-/* รายชื่ออีเมลที่ "แก้ไขข้อมูลได้"
-   - ใส่อีเมลของฝ่ายขาย/ฝ่ายบัญชี/ผู้ดูแล ที่ต้องแก้ข้อมูล
-   - คนที่ล็อกอินด้วยอีเมลนอกรายการนี้ = เข้าดูได้อย่างเดียว (View only)
-   - ถ้าเว้นว่าง [] = ทุกคนที่ล็อกอินแก้ได้ (ไม่จำกัด)                */
-const EDITOR_EMAILS = [
-  "finance@p-plaai.com",
-  "sales1.plaaihotel@p-plaai.com",
+/* =========================================================
+   สิทธิ์การใช้งานแบบแยกตำแหน่ง (ROLE-BASED ACCESS)
+   ---------------------------------------------------------
+   มี 4 ระดับสิทธิ์:
+   • owner  (เจ้าของกิจการ) — ดูได้ทุกหน้า และ "แก้ไขได้ทุกอย่าง"
+   • finance (ฝ่ายบัญชี)     — ดูได้ทุกหน้า แต่แก้ได้ "เฉพาะตัวเลขยอดขาย/รายได้" (หน้าเจ้าของ)
+   • sales  (ฝ่ายขาย)        — ดูได้ทุกหน้า แต่แก้ได้ "เฉพาะข้อมูลของเซลล์ตัวเอง" เท่านั้น
+   • viewer (อื่น ๆ)          — เข้าดูได้อย่างเดียว (View only)
+   หมายเหตุ: ถ้าใช้งานแบบออฟไลน์ (ไม่ต่อคลาวด์) จะแก้ได้ทุกอย่างเหมือนเดิม
+   ========================================================= */
+
+/* อีเมลเจ้าของกิจการ (สิทธิ์สูงสุด แก้ได้ทุกหน้า) */
+const OWNER_EMAILS = [
   "kunnsiri@gmail.com",
   "rda.plaai@gmail.com",
-  "ales.plusbowin@p-plaai.com",
-  "salesco.plus@p-plaai.com",
 ];
+
+/* อีเมลฝ่ายบัญชี (ดูได้ทุกหน้า แต่แก้ได้เฉพาะตัวเลขยอดขาย/รายได้) */
+const FINANCE_EMAILS = [
+  "finance@p-plaai.com",
+];
+
+/* ผูก "อีเมลของฝ่ายขายแต่ละคน" กับ "รหัสเซลล์ (salesId)" ของตัวเอง
+   - เซลล์คนนั้นจะแก้ได้เฉพาะข้อมูลของ salesId ตัวเอง (Pipeline/Function/Account/กิจกรรม/แผนงาน)
+   - ค่าเริ่มต้น s1/s2/s3 = เซลล์ 1/2/3 ในระบบ  ← แก้ให้ตรงกับเซลล์จริงได้เลย
+   - เพิ่มบรรทัดใหม่ได้ตามจำนวนพนักงานขาย เช่น "email@บริษัท": "s4"        */
+const SALES_EMAILS = {
+  "sales1.plaaihotel@p-plaai.com": "s1",
+  "ales.plusbowin@p-plaai.com":    "s2",
+  "salesco.plus@p-plaai.com":      "s3",
+};
 
 /* URL ของ Supabase Edge Function สำหรับส่งสรุปเข้า LINE (ดูคู่มือ LINE)
    - ถ้าใส่ไว้ ปุ่ม “ส่งเข้า LINE เลย” จะทำงานได้
@@ -156,15 +175,62 @@ if (CLOUD && window.supabase) sb = window.supabase.createClient(SUPABASE_URL, SU
   }
 });
 
-// สิทธิ์แก้ไข: ออฟไลน์แก้ได้เสมอ / ออนไลน์ดูจากรายชื่อ EDITOR_EMAILS
-function canEdit(){
-  if(!CLOUD) return true;
-  if(!EDITOR_EMAILS || EDITOR_EMAILS.length===0) return true;
-  const em = (currentUser && currentUser.email || "").toLowerCase();
-  return EDITOR_EMAILS.map(e=>e.toLowerCase()).includes(em);
+// ---------- สิทธิ์การใช้งาน (ROLE-BASED) ----------
+function currentEmail(){ return (currentUser && currentUser.email || "").toLowerCase(); }
+// หา salesId ของอีเมลนี้ (จาก config SALES_EMAILS หรือช่องอีเมลที่ผูกไว้กับตัวเซลล์)
+function salesIdForEmail(em){
+  em = (em||"").toLowerCase();
+  for(const k in SALES_EMAILS){ if(k.toLowerCase()===em) return SALES_EMAILS[k]; }
+  const rep = ((db && db.salesReps) || []).find(s=>(s.email||"").toLowerCase()===em && em);
+  return rep ? rep.id : null;
 }
-function readOnly(){ return CLOUD && !canEdit(); }
+function mySalesId(){ return salesIdForEmail(currentEmail()); }
+// ตำแหน่งของผู้ใช้ปัจจุบัน: owner | finance | sales | viewer  (ออฟไลน์ = owner)
+function userRole(){
+  if(!CLOUD) return "owner";
+  const em = currentEmail();
+  if(OWNER_EMAILS.map(e=>e.toLowerCase()).includes(em)) return "owner";
+  if(FINANCE_EMAILS.map(e=>e.toLowerCase()).includes(em)) return "finance";
+  if(salesIdForEmail(em)) return "sales";
+  return "viewer";
+}
+function isOwner(){ return userRole()==="owner"; }
+function isFinance(){ return userRole()==="finance"; }
+function isSales(){ return userRole()==="sales"; }
+
+// แก้อะไรได้บ้างไหม (ไม่ใช่ viewer) — คงชื่อเดิมไว้เพื่อความเข้ากันได้
+function canEdit(){ return userRole()!=="viewer"; }
+// ดูอย่างเดียวทั้งระบบ = เฉพาะ viewer เท่านั้น (owner/finance/sales แก้ได้บางส่วน)
+function readOnly(){ return CLOUD && userRole()==="viewer"; }
 function roDisabled(){ return readOnly() ? "disabled" : ""; }
+
+// แก้ข้อมูล "ของเซลล์คนนี้" ได้ไหม (owner=ทุกคน · sales=เฉพาะตัวเอง · finance/viewer=ไม่ได้)
+function canEditSales(salesId){
+  if(!CLOUD) return true;
+  const r = userRole();
+  if(r==="owner") return true;
+  if(r==="sales") return mySalesId()===salesId;
+  return false;
+}
+function dSales(salesId){ return canEditSales(salesId) ? "" : "disabled"; }
+// แก้ตัวเลขยอดขาย/รายได้ (หน้าเจ้าของ) ได้ไหม — owner + finance
+function canEditRevenue(){ if(!CLOUD) return true; const r=userRole(); return r==="owner"||r==="finance"; }
+// แก้ Forecast ของฝ่ายขาย — owner + sales
+function canEditForecast(){ if(!CLOUD) return true; const r=userRole(); return r==="owner"||r==="sales"; }
+// แก้โครงสร้างระบบ (โรงแรม/เซลล์/เป้า/ปี/สำรองข้อมูล) — เจ้าของเท่านั้น
+function canManage(){ if(!CLOUD) return true; return userRole()==="owner"; }
+function guardSales(salesId){ if(canEditSales(salesId)) return true; alert("บัญชีนี้แก้ได้เฉพาะข้อมูลของเซลล์ตัวเองเท่านั้น"); return false; }
+function guardRevenue(){ if(canEditRevenue()) return true; alert("เฉพาะเจ้าของกิจการหรือฝ่ายบัญชีเท่านั้นที่แก้ไขตัวเลขยอดขายได้"); return false; }
+function guardManage(){ if(canManage()) return true; alert("เฉพาะเจ้าของกิจการเท่านั้นที่แก้ไขส่วนนี้ได้"); return false; }
+// ป้ายบอกตำแหน่ง/สิทธิ์ที่มุมบนขวา
+function roleBadgeHtml(){
+  const r = userRole();
+  const box = (txt,col)=>`<span class="text-xs font-semibold px-2 py-1 rounded" style="background:rgba(255,255,255,0.18);color:${col};">${txt}</span>`;
+  if(r==="owner")   return box("👑 เจ้าของกิจการ · แก้ได้ทุกหน้า","#fde68a");
+  if(r==="finance") return box("🧮 ฝ่ายบัญชี · แก้เฉพาะยอดขาย","#a7f3d0");
+  if(r==="sales"){ const nm=salesById(mySalesId())?.name||"เซลล์"; return box("🧑‍💼 ฝ่ายขาย: "+nm+" · แก้เฉพาะของตัวเอง","#bae6fd"); }
+  return box("👁 ดูอย่างเดียว","#fde68a");
+}
 // ผู้ใช้กำลังพิมพ์/เปิดหน้าต่างกรอกข้อมูลอยู่ไหม (จะได้ไม่รีเฟรชทับ)
 function isUserBusy(){
   if(document.getElementById("modalForm")) return true;
@@ -303,7 +369,7 @@ function syncLookups(){ HOTELS = db.hotels; SALES_REPS = db.salesReps; }
 function normalizeData(){
   // hotels & sales reps are now persisted; fall back to defaults for old saves
   db.hotels = (db.hotels && db.hotels.length) ? db.hotels.map(h=>({ features:{ functionRoom:true, otaOnly:false }, accent:"#0e7490", sub:"", ...h, features:{ functionRoom:true, otaOnly:false, ...(h.features||{}) } })) : DEFAULT_HOTELS.map(h=>({ ...h, features:{ ...h.features } }));
-  db.salesReps = (db.salesReps && db.salesReps.length) ? db.salesReps.map(s=>({ actionPlan:"", ...s })) : DEFAULT_SALES_REPS.map(s=>({ actionPlan:"", ...s }));
+  db.salesReps = (db.salesReps && db.salesReps.length) ? db.salesReps.map(s=>({ actionPlan:"", email:"", ...s })) : DEFAULT_SALES_REPS.map(s=>({ actionPlan:"", email:"", ...s }));
   syncLookups();
   db.accounts = (db.accounts||[]).map(a=>({ contactPerson:"", phone:"", lastContactTopic:"", ...a }));
   db.pipeline = db.pipeline||[]; db.functionEvents = db.functionEvents||[]; db.activities = db.activities||[];
@@ -397,6 +463,8 @@ async function cloudBootstrap(){
       if(!readOnly()) await pushEntireDb();
     }
     cloudSnapshot = JSON.parse(JSON.stringify(db));
+    // ถ้าเป็นบัญชีฝ่ายขาย ให้เริ่มที่หน้าเซลล์ตัวเองเลย (สะดวกในการแก้ข้อมูลของตัวเอง)
+    if(isSales()){ const sid=mySalesId(); if(sid) ui.currentSales=sid; }
     subscribeRealtime();
     setCloudStatus("saved");
     startIdleWatch();   // เริ่มจับเวลา auto logout เมื่อไม่มีการใช้งาน
@@ -482,7 +550,7 @@ function fcPipeline(hid,key){ const e=forecastEntry(hid,key); return e?Number(e.
 function fcFunction(hid,key){ const e=forecastEntry(hid,key); return e?Number(e.functionForecast)||0:0; }
 function fcTotal(hid,key){ return fcPipeline(hid,key)+fcFunction(hid,key); }
 function setForecastPart(hid,month,part,value){
-  if(readOnly()) return;
+  if(!canEditForecast()){ render(); return; }
   let e = db.forecasts.find(x=>x.hotelId===hid && x.month===month);
   if(!e){ e={ id:uid("fc"), hotelId:hid, month, pipelineForecast:0, functionForecast:0, notes:"" }; db.forecasts.push(e); }
   e[part] = Number(value)||0;
@@ -588,13 +656,13 @@ function renderTopBar(){
         </div>
         <button onclick="openSalesReport()" title="ดึงรายงานฝ่ายขายรายคน (เลือกช่วงวันที่ · Export Excel/CSV · ส่งอีเมล)"
                 class="btn text-xs px-3 py-1.5 font-semibold ${ui.page==='salesReport'?'bg-white text-cyan-800':'bg-white/20 hover:bg-white/30 text-white'}">📄 รายงานเซลล์</button>
-        ${readOnly() ? `<span class="text-xs font-semibold px-2 py-1 rounded" style="background:rgba(255,255,255,0.18);color:#fde68a;" title="บัญชีนี้เข้าดูข้อมูลได้อย่างเดียว">👁 ดูอย่างเดียว</span>` : ""}
+        ${CLOUD ? roleBadgeHtml() : ""}
         ${CLOUD ? `<span id="cloudStatus" class="text-xs" style="color:#a7f3d0;">●</span>` : `<span class="text-xs" style="color:#fde68a;" title="กำลังใช้งานแบบออฟไลน์ในเครื่องนี้">ออฟไลน์</span>`}
         <button onclick="showWeeklySummary()" title="สร้าง/ส่งสรุปยอดขายประจำสัปดาห์เข้า LINE" class="btn text-xs bg-white/20 hover:bg-white/30 text-white px-3 py-1.5">📤 สรุปสัปดาห์</button>
-        <button onclick="exportData()" title="ดาวน์โหลดข้อมูลสำรอง" class="btn text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-1.5">Export</button>
+        ${canManage() ? `<button onclick="exportData()" title="ดาวน์โหลดข้อมูลสำรองทั้งหมด (เฉพาะเจ้าของ)" class="btn text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-1.5">Export</button>
         <label class="ro-hide btn text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 cursor-pointer">Import
           <input type="file" accept="application/json" class="hidden" onchange="importData(event)" />
-        </label>
+        </label>` : ""}
         ${(CLOUD && currentUser) ? `<button onclick="logout()" title="ออกจากระบบ" class="btn text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-1.5">ออกจากระบบ</button>` : ""}
       </div>
     </div>
@@ -640,6 +708,8 @@ function renderSalesView(){
   const hotels = repHotels(sid);
   if (!ui.salesHotel || !hotels.find(h=>h.id===ui.salesHotel)) ui.salesHotel = hotels[0].id;
 
+  const editable = canEditSales(sid); // แก้ข้อมูลของเซลล์คนที่กำลังดูอยู่ได้ไหม
+
   return `
   <div class="flex flex-wrap items-center justify-between gap-3 mb-5">
     <div class="flex items-center gap-2">
@@ -647,15 +717,16 @@ function renderSalesView(){
       <select onchange="setSalesRep(this.value)" class="btn-ghost btn px-3 py-1.5 text-sm">
         ${SALES_REPS.map(s=>`<option value="${s.id}" ${s.id===sid?"selected":""}>${s.name}</option>`).join("")}
       </select>
-      <button onclick="openSalesModal('${sid}')" title="แก้ไข/ลบเซลล์คนนี้" class="btn btn-ghost text-xs px-2 py-1.5">✎</button>
-      <button onclick="openSalesModal()" title="เพิ่มฝ่ายขายคนใหม่" class="btn btn-ghost text-xs px-2 py-1.5">＋ เพิ่มเซลล์</button>
+      ${canManage() ? `<button onclick="openSalesModal('${sid}')" title="แก้ไข/ลบเซลล์คนนี้" class="btn btn-ghost text-xs px-2 py-1.5">✎</button>
+      <button onclick="openSalesModal()" title="เพิ่มฝ่ายขายคนใหม่" class="btn btn-ghost text-xs px-2 py-1.5">＋ เพิ่มเซลล์</button>` : ""}
       <span class="text-sm text-slate-400 ml-1">• เดือน ${monthLabel(mk)}</span>
+      ${(!editable && !readOnly()) ? `<span class="text-xs px-2 py-1 rounded" style="background:#fef3c7;color:#92580a;" title="ดูข้อมูลของเซลล์คนอื่นได้ แต่แก้ไม่ได้">👁 กำลังดูของเซลล์คนอื่น (แก้ไม่ได้)</span>` : ""}
     </div>
     <div class="flex gap-2 flex-wrap">
-      ${qbtn("openActivityModal()","#334155","＋","Activity")}
+      ${editable ? `${qbtn("openActivityModal()","#334155","＋","Activity")}
       ${qbtn("openPipelineModal()","#0369a1","＋","Pipeline Deal")}
       ${qbtn("openFunctionModal()","#b45309","＋","งาน Function")}
-      ${qbtn("openAccountModal()","#0e7490","＋","Account")}
+      ${qbtn("openAccountModal()","#0e7490","＋","Account")}` : ""}
     </div>
   </div>
 
@@ -679,7 +750,7 @@ function renderSalesView(){
     <div class="card p-4">
       <div class="flex items-center justify-between mb-3">
         <div class="section-title">Pipeline ของฉัน</div>
-        <button onclick="openPipelineModal()" class="btn btn-ghost text-xs px-3 py-1.5">＋ เพิ่มดีล</button>
+        ${editable ? `<button onclick="openPipelineModal()" class="btn btn-ghost text-xs px-3 py-1.5">＋ เพิ่มดีล</button>` : ""}
       </div>
       <div class="text-xs text-slate-400 mb-2">ติ๊กสถานะเป็น <b>“ปิดได้แน่นอน (Won)”</b> แล้วยอดจะเข้า On Hand อัตโนมัติ</div>
       <div class="overflow-x-auto"><table class="w-full text-sm">
@@ -691,7 +762,7 @@ function renderSalesView(){
             <td>${hotelById(p.hotelId).name}</td>
             <td>${fmtMoney(p.estValue)}</td>
             <td>${stageSelect(p)}</td>
-            <td class="text-right whitespace-nowrap"><button onclick="openPipelineModal('${p.id}')" class="text-cyan-700 text-xs mr-2">แก้ไข</button><button onclick="deletePipeline('${p.id}')" class="text-rose-500 text-xs">ลบ</button></td>
+            <td class="text-right whitespace-nowrap">${canEditSales(p.salesId)?`<button onclick="openPipelineModal('${p.id}')" class="text-cyan-700 text-xs mr-2">แก้ไข</button><button onclick="deletePipeline('${p.id}')" class="text-rose-500 text-xs">ลบ</button>`:`<span class="text-slate-300 text-xs">—</span>`}</td>
           </tr>`).join("") || `<tr><td class="py-2 text-slate-400" colspan="5">ยังไม่มีข้อมูล</td></tr>`}
         </tbody>
       </table></div>
@@ -700,7 +771,7 @@ function renderSalesView(){
     <div class="card p-4">
       <div class="flex items-center justify-between mb-3">
         <div class="section-title">งาน Function ของฉัน</div>
-        <button onclick="openFunctionModal()" class="btn btn-ghost text-xs px-3 py-1.5">＋ เพิ่มงาน</button>
+        ${editable ? `<button onclick="openFunctionModal()" class="btn btn-ghost text-xs px-3 py-1.5">＋ เพิ่มงาน</button>` : ""}
       </div>
       <div class="text-xs text-slate-400 mb-2">ติ๊กสถานะเป็น <b>“ยืนยันแล้ว”</b> / BEO / จบงาน → ยอดเข้า On Hand อัตโนมัติ</div>
       <div class="overflow-x-auto"><table class="w-full text-sm">
@@ -713,9 +784,9 @@ function renderSalesView(){
             <td>${f.eventDate}</td>
             <td>${functionSelect(f)}</td>
             <td class="text-right whitespace-nowrap">
-              <button onclick="quickLogFor('${f.hotelId}','${escAttr(f.clientName)}')" class="text-slate-500 text-xs mr-2" title="บันทึกกิจกรรม">+ Activity</button>
+              ${canEditSales(f.salesId)?`<button onclick="quickLogFor('${f.hotelId}','${escAttr(f.clientName)}')" class="text-slate-500 text-xs mr-2" title="บันทึกกิจกรรม">+ Activity</button>
               <button onclick="openFunctionModal('${f.id}')" class="text-cyan-700 text-xs mr-2">แก้ไข</button>
-              <button onclick="deleteFunction('${f.id}')" class="text-rose-500 text-xs">ลบ</button>
+              <button onclick="deleteFunction('${f.id}')" class="text-rose-500 text-xs">ลบ</button>`:`<span class="text-slate-300 text-xs">—</span>`}
             </td>
           </tr>`).join("") || `<tr><td class="py-2 text-slate-400" colspan="5">ยังไม่มีข้อมูล</td></tr>`}
         </tbody>
@@ -729,7 +800,7 @@ function renderSalesView(){
       <span class="text-xs text-slate-400">บันทึกอัตโนมัติ · ใช้ในรายงานเซลล์</span>
     </div>
     <div class="text-xs text-slate-400 mb-2">พิมพ์แผนงาน/สิ่งที่จะทำต่อ เช่น ปิดดีลบริษัท ABC · โทรหาลูกค้าเก่า · ส่ง BEO งานสัมมนา</div>
-    <textarea ${roDisabled()} rows="3" onchange="saveRepPlan('${sid}',this.value)"
+    <textarea ${dSales(sid)} rows="3" onchange="saveRepPlan('${sid}',this.value)"
       class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-200"
       placeholder="พิมพ์แผนงานถัดไปที่นี่...">${escAttr(rep.actionPlan||"")}</textarea>
   </div>
@@ -746,7 +817,7 @@ function renderSalesView(){
           <td class="py-1.5">${a.date}</td><td>${ACTIVITY_TYPES[a.type]||a.type}</td>
           <td>${hotelById(a.hotelId).name}</td><td>${a.accountName||"-"}</td>
           <td class="text-slate-500">${a.notes||""}</td>
-          <td class="text-right"><button onclick="deleteActivity('${a.id}')" class="text-rose-500 text-xs">ลบ</button></td>
+          <td class="text-right">${canEditSales(a.salesId)?`<button onclick="deleteActivity('${a.id}')" class="text-rose-500 text-xs">ลบ</button>`:`<span class="text-slate-300 text-xs">—</span>`}</td>
         </tr>`).join("") || `<tr><td class="py-2 text-slate-400" colspan="6">ยังไม่มีข้อมูล</td></tr>`}
       </tbody>
     </table></div>
@@ -755,7 +826,7 @@ function renderSalesView(){
   <div class="card p-4 mt-5">
     <div class="flex items-center justify-between mb-3">
       <div class="section-title">Account ที่ดูแล</div>
-      <button onclick="openAccountModal()" class="btn btn-ghost text-xs px-3 py-1.5">＋ เพิ่ม Account</button>
+      ${editable ? `<button onclick="openAccountModal()" class="btn btn-ghost text-xs px-3 py-1.5">＋ เพิ่ม Account</button>` : ""}
     </div>
     <div class="overflow-x-auto"><table class="w-full text-sm">
       <thead><tr class="text-left text-slate-500 border-b"><th class="py-1">ชื่อบริษัท</th><th>โรงแรม</th><th>ผู้ติดต่อ</th><th>เบอร์โทร</th><th>สถานะ</th><th>Room Nights</th><th>ติดต่อล่าสุด</th><th class="text-right">จัดการ</th></tr></thead>
@@ -769,9 +840,9 @@ function renderSalesView(){
           <td>${a.lastContactDate} ${daysDiff(a.lastContactDate)<=-14?'<span class="text-rose-500">(เงียบไป '+Math.abs(daysDiff(a.lastContactDate))+' วัน)</span>':''}
               ${a.lastContactTopic?`<div class="text-xs text-slate-400">${a.lastContactTopic}</div>`:""}</td>
           <td class="text-right whitespace-nowrap">
-            <button onclick="quickLogFor('${a.hotelIds[0]}','${escAttr(a.name)}')" class="text-slate-500 text-xs mr-2" title="บันทึกกิจกรรม">+ Activity</button>
+            ${canEditSales(a.salesId)?`<button onclick="quickLogFor('${a.hotelIds[0]}','${escAttr(a.name)}')" class="text-slate-500 text-xs mr-2" title="บันทึกกิจกรรม">+ Activity</button>
             <button onclick="openAccountModal('${a.id}')" class="text-cyan-700 text-xs mr-2">แก้ไข</button>
-            <button onclick="deleteAccount('${a.id}')" class="text-rose-500 text-xs">ลบ</button>
+            <button onclick="deleteAccount('${a.id}')" class="text-rose-500 text-xs">ลบ</button>`:`<span class="text-slate-300 text-xs">—</span>`}
           </td>
         </tr>`).join("") || `<tr><td class="py-2 text-slate-400" colspan="8">ยังไม่มีข้อมูล</td></tr>`}
       </tbody>
@@ -818,9 +889,9 @@ function renderSalesForecast(sid, hotels){
         return `<tr class="border-b last:border-0 ${isNext?'bg-cyan-50/60':''}">
           <td class="py-2 font-medium">${monthLabel(mk)} ${isNext?'<span class="badge bg-cyan-100 text-cyan-800 ml-1">เดือนถัดไป</span>':''}</td>
           <td class="text-right font-semibold" style="color:var(--pos)">${fmtMoney(oh)}</td>
-          <td class="text-right"><input ${roDisabled()} class="fc-input" type="number" value="${fp||''}" placeholder="0"
+          <td class="text-right"><input ${canEditForecast()?"":"disabled"} class="fc-input" type="number" value="${fp||''}" placeholder="0"
                 onchange="setForecastPart('${hid}','${mk}','pipelineForecast',this.value)"></td>
-          <td class="text-right"><input ${roDisabled()} class="fc-input" type="number" value="${ff||''}" placeholder="0"
+          <td class="text-right"><input ${canEditForecast()?"":"disabled"} class="fc-input" type="number" value="${ff||''}" placeholder="0"
                 onchange="setForecastPart('${hid}','${mk}','functionForecast',this.value)"></td>
           <td class="text-right font-semibold">${fmtMoney(ft)}</td>
           <td class="text-right ${diff>=0?'text-teal-600':'text-rose-500'}">${(diff>=0?'+':'')+fmtMoney(diff)}</td>
@@ -831,23 +902,24 @@ function renderSalesForecast(sid, hotels){
   </div>`;
 }
 
-// ---- interactive selects (sales only) ----
+// ---- interactive selects (sales only) — เปิดให้แก้เฉพาะเจ้าของข้อมูล ----
 function stageSelect(p){
-  return `<select ${roDisabled()} onchange="updateField('pipeline','${p.id}','stage',this.value)" class="pill-select badge ${STAGE_COLOR[p.stage]}">
+  return `<select ${dSales(p.salesId)} onchange="updateField('pipeline','${p.id}','stage',this.value)" class="pill-select badge ${STAGE_COLOR[p.stage]}">
     ${Object.entries(PIPELINE_STAGES).map(([k,v])=>`<option value="${k}" ${k===p.stage?"selected":""}>${v}</option>`).join("")}</select>`;
 }
 function functionSelect(f){
-  return `<select ${roDisabled()} onchange="updateField('functionEvents','${f.id}','status',this.value)" class="pill-select badge ${FUNCTION_COLOR[f.status]}">
+  return `<select ${dSales(f.salesId)} onchange="updateField('functionEvents','${f.id}','status',this.value)" class="pill-select badge ${FUNCTION_COLOR[f.status]}">
     ${Object.entries(FUNCTION_STATUS).map(([k,v])=>`<option value="${k}" ${k===f.status?"selected":""}>${v}</option>`).join("")}</select>`;
 }
 function accountSelect(a){
-  return `<select ${roDisabled()} onchange="updateField('accounts','${a.id}','status',this.value)" class="pill-select badge ${ACCOUNT_COLOR[a.status]}">
+  return `<select ${dSales(a.salesId)} onchange="updateField('accounts','${a.id}','status',this.value)" class="pill-select badge ${ACCOUNT_COLOR[a.status]}">
     ${Object.entries(ACCOUNT_STATUS).map(([k,v])=>`<option value="${k}" ${k===a.status?"selected":""}>${v}</option>`).join("")}</select>`;
 }
 function updateField(collection,id,field,value){
-  if(readOnly()){ render(); return; }
-  const item = db[collection].find(x=>x.id===id);
-  if(item){ item[field]=value; saveData(); render(); }
+  const item = db[collection] ? db[collection].find(x=>x.id===id) : null;
+  if(!item){ render(); return; }
+  if(!canEditSales(item.salesId)){ alert("บัญชีนี้แก้ได้เฉพาะข้อมูลของเซลล์ตัวเองเท่านั้น"); render(); return; }
+  item[field]=value; saveData(); render();
 }
 
 // ---- read-only badges (GM) ----
@@ -865,7 +937,7 @@ function renderGMView(){
       <button onclick="setHotelTab('group')" class="tab-pill px-4 py-2 rounded-full text-sm ${ui.currentHotelTab==='group'?'active':''}">ภาพรวมทั้งกลุ่ม</button>
       ${HOTELS.map(h=>`<button onclick="setHotelTab('${h.id}')" class="tab-pill px-4 py-2 rounded-full text-sm ${ui.currentHotelTab===h.id?'active':''}">${h.name}</button>`).join("")}
     </div>
-    <button onclick="openHotelModal()" title="เพิ่มโรงแรมใหม่" class="btn btn-ghost text-xs px-3 py-2">＋ เพิ่มโรงแรม</button>
+    ${canManage() ? `<button onclick="openHotelModal()" title="เพิ่มโรงแรมใหม่" class="btn btn-ghost text-xs px-3 py-2">＋ เพิ่มโรงแรม</button>` : ""}
   </div>`;
   if (ui.currentHotelTab==="group") return tabs + renderGroupDashboard();
   const hid = ui.currentHotelTab, hotel = hotelById(hid);
@@ -874,7 +946,7 @@ function renderGMView(){
     <div class="w-1.5 h-10 rounded-full" style="background:${hotel.accent};"></div>
     <div class="flex-1"><div class="text-xl font-bold text-slate-800">${hotel.name}</div>
     <div class="text-sm text-slate-500">${hotel.sub}</div></div>
-    <button onclick="openHotelModal('${hid}')" title="แก้ไข/ลบโรงแรมนี้" class="btn btn-ghost text-xs px-3 py-1.5">✎ แก้ไขโรงแรม</button>
+    ${canManage() ? `<button onclick="openHotelModal('${hid}')" title="แก้ไข/ลบโรงแรมนี้" class="btn btn-ghost text-xs px-3 py-1.5">✎ แก้ไขโรงแรม</button>` : ""}
   </div>
   ${renderHotelDashboard(hid,hotel)}`;
 }
@@ -921,7 +993,7 @@ function renderGroupDashboard(){
       <select onchange="setYear(this.value)" class="btn btn-ghost text-sm px-3 py-2">
         ${db.years.slice().sort((a,b)=>a-b).map(y=>`<option value="${y}" ${y===yr?"selected":""}>ปี พ.ศ. ${y+543}</option>`).join("")}
       </select>
-      <button onclick="addYear()" class="btn btn-primary text-sm px-3 py-2">＋ เพิ่มปีถัดไป</button>
+      ${canManage() ? `<button onclick="addYear()" class="btn btn-primary text-sm px-3 py-2">＋ เพิ่มปีถัดไป</button>` : ""}
     </div>
   </div>
 
@@ -930,7 +1002,7 @@ function renderGroupDashboard(){
       <div class="section-title">ความคืบหน้าเทียบเป้าทั้งปี — พ.ศ. ${yr+543}</div>
       <div class="flex items-center gap-2">
         <div class="text-sm text-slate-500">คาดการณ์รวม <b class="text-slate-700">${fmtMoney(projected)}</b> / เป้า ${fmtMoney(TARGET)}</div>
-        <button onclick="openTargetModal(${yr})" class="btn btn-ghost text-xs px-3 py-1.5">✎ แก้ไขเป้า</button>
+        ${canManage() ? `<button onclick="openTargetModal(${yr})" class="btn btn-ghost text-xs px-3 py-1.5">✎ แก้ไขเป้า</button>` : ""}
       </div>
     </div>
     <div class="progress-track relative">
@@ -1217,12 +1289,16 @@ function renderOwnerView(){
       <div class="text-2xl font-bold text-slate-800">ยอดขายรวม — ${scopeName}</div>
       <div class="text-sm text-slate-500">รวมทุกช่องทาง: OTA · FIT · Walk-in · Corporate · อื่นๆ</div>
     </div>
-    <div class="flex items-center gap-2">
+    <div class="flex items-center gap-2 flex-wrap">
       <span class="text-sm text-slate-500">ปี</span>
       <select onchange="setOwnerYear(this.value)" class="btn btn-ghost text-sm px-3 py-2">
         ${yearsSel.map(yy=>`<option value="${yy}" ${yy===y?"selected":""}>พ.ศ. ${yy+543}</option>`).join("")}
       </select>
-      <button onclick="openRevenueModal()" class="qbtn-solid" style="background:#0e7490"><span class="qi">＋</span> กรอกยอดขาย</button>
+      <button onclick="exportRevenueExcel()" title="ดาวน์โหลดตัวเลขยอดขายทั้งปีเป็น Excel (แก้ทีเดียวหลายเดือน)" class="qbtn-solid" style="background:#0f766e"><span class="qi">⬇</span> Excel</button>
+      <button onclick="exportRevenueCSV()" title="ดาวน์โหลดตัวเลขยอดขายทั้งปีเป็น CSV" class="qbtn-solid" style="background:#0369a1"><span class="qi">⬇</span> CSV</button>
+      ${canEditRevenue() ? `<label class="qbtn-solid cursor-pointer" style="background:#7c3aed" title="นำเข้าไฟล์ Excel/CSV เพื่ออัปเดตตัวเลขยอดขายทีเดียวหลายเดือน"><span class="qi">⬆</span> นำเข้าตัวเลข
+        <input type="file" accept=".xlsx,.xls,.csv" class="hidden" onchange="importRevenueFile(event)"/></label>
+      <button onclick="openRevenueModal()" class="qbtn-solid" style="background:#0e7490"><span class="qi">＋</span> กรอกยอดขาย</button>` : ""}
     </div>
   </div>
 
@@ -1344,16 +1420,16 @@ function setSalesHotel(id){ ui.salesHotel=id; render(); }
 function setYear(y){ ui.year=Number(y); render(); }
 function setOwnerTab(id){ ui.ownerTab=id; render(); }
 function setOwnerYear(y){ ui.ownerYear=Number(y); render(); }
-function addYear(){ const mx=Math.max.apply(null,db.years); db.years.push(mx+1); ui.year=mx+1; saveData(); render(); }
+function addYear(){ if(!guardManage())return; const mx=Math.max.apply(null,db.years); db.years.push(mx+1); ui.year=mx+1; saveData(); render(); }
 function setToday(v){ ui.today = v || null; render(); }
 
 // ============================================================
 // DELETE HANDLERS
 // ============================================================
-function deletePipeline(id){ if(!confirm("ลบรายการ Pipeline นี้?"))return; db.pipeline=db.pipeline.filter(p=>p.id!==id); saveData(); render(); }
-function deleteFunction(id){ if(!confirm("ลบงาน Function นี้?"))return; db.functionEvents=db.functionEvents.filter(f=>f.id!==id); saveData(); render(); }
-function deleteActivity(id){ if(!confirm("ลบกิจกรรมนี้?"))return; db.activities=db.activities.filter(a=>a.id!==id); saveData(); render(); }
-function deleteAccount(id){ if(!confirm("ลบ Account นี้?"))return; db.accounts=db.accounts.filter(a=>a.id!==id); saveData(); render(); }
+function deletePipeline(id){ const it=db.pipeline.find(p=>p.id===id); if(!it)return; if(!guardSales(it.salesId))return; if(!confirm("ลบรายการ Pipeline นี้?"))return; db.pipeline=db.pipeline.filter(p=>p.id!==id); saveData(); render(); }
+function deleteFunction(id){ const it=db.functionEvents.find(f=>f.id===id); if(!it)return; if(!guardSales(it.salesId))return; if(!confirm("ลบงาน Function นี้?"))return; db.functionEvents=db.functionEvents.filter(f=>f.id!==id); saveData(); render(); }
+function deleteActivity(id){ const it=db.activities.find(a=>a.id===id); if(!it)return; if(!guardSales(it.salesId))return; if(!confirm("ลบกิจกรรมนี้?"))return; db.activities=db.activities.filter(a=>a.id!==id); saveData(); render(); }
+function deleteAccount(id){ const it=db.accounts.find(a=>a.id===id); if(!it)return; if(!guardSales(it.salesId))return; if(!confirm("ลบ Account นี้?"))return; db.accounts=db.accounts.filter(a=>a.id!==id); saveData(); render(); }
 
 // ============================================================
 // MODALS
@@ -1382,6 +1458,14 @@ function modalShell(title,bodyHtml,onSubmitFn,extraFooter){
 function closeModal(){ document.getElementById("modalRoot").innerHTML=""; flushPendingRender(); }
 function hotelOptions(sel){ return HOTELS.map(h=>`<option value="${h.id}" ${h.id===sel?"selected":""}>${h.name}</option>`).join(""); }
 function salesOptions(sel){ return SALES_REPS.map(s=>`<option value="${s.id}" ${s.id===sel?"selected":""}>${s.name}</option>`).join(""); }
+// ช่องเลือกเซลล์ผู้ดูแลในฟอร์ม: ถ้าเป็นบัญชีฝ่ายขาย จะล็อกเป็น "ตัวเอง" แก้ไม่ได้
+function salesSelectHtml(sel){
+  if(isSales()){
+    const sid = mySalesId(); const rep = salesById(sid);
+    return `<select id="f_sales" class="${inputCls}" disabled title="ฝ่ายขายเพิ่ม/แก้ได้เฉพาะข้อมูลของตัวเอง"><option value="${sid}" selected>${rep?rep.name:sid}</option></select>`;
+  }
+  return `<select id="f_sales" class="${inputCls}">${salesOptions(sel)}</select>`;
+}
 const inputCls = "w-full border border-slate-200 rounded-lg px-2 py-1.5 mt-1 shadow-sm focus:outline-none focus:ring-2 focus:ring-cyan-200";
 
 // ---- Activity ----
@@ -1389,7 +1473,7 @@ function openActivityModal(preset){
   preset = preset||{};
   const body = `
     <label class="block text-sm">วันที่<input type="date" id="f_date" value="${todayStr()}" class="${inputCls}"/></label>
-    <label class="block text-sm">เซลล์<select id="f_sales" class="${inputCls}">${salesOptions(ui.currentSales)}</select></label>
+    <label class="block text-sm">เซลล์${salesSelectHtml(ui.currentSales)}</label>
     <label class="block text-sm">โรงแรม<select id="f_hotel" class="${inputCls}">${hotelOptions(preset.hotelId||ui.salesHotel||HOTELS[0].id)}</select></label>
     <label class="block text-sm">ประเภทกิจกรรม<select id="f_type" class="${inputCls}">${Object.entries(ACTIVITY_TYPES).map(([k,v])=>`<option value="${k}">${v}</option>`).join("")}</select></label>
     <label class="block text-sm">Account/ชื่องาน<input id="f_account" value="${escAttr(preset.accountName||"")}" class="${inputCls}" placeholder="เช่น บริษัท ABC จำกัด"/></label>
@@ -1397,7 +1481,9 @@ function openActivityModal(preset){
   document.getElementById("modalRoot").innerHTML = modalShell("Log Activity", body, "submitActivity");
 }
 function submitActivity(){
-  db.activities.unshift({ id:uid("act"), date:val("f_date"), salesId:val("f_sales"), hotelId:val("f_hotel"),
+  const salesId = isSales() ? mySalesId() : val("f_sales");
+  if(!guardSales(salesId)) return;
+  db.activities.unshift({ id:uid("act"), date:val("f_date"), salesId, hotelId:val("f_hotel"),
     type:val("f_type"), accountName:val("f_account"), notes:val("f_notes") });
   saveData(); closeModal(); render();
 }
@@ -1408,7 +1494,7 @@ function openPipelineModal(id,presetHotelId){
   const ex = id ? db.pipeline.find(p=>p.id===id) : null;
   const body = `
     <label class="block text-sm">โรงแรม<select id="f_hotel" class="${inputCls}">${hotelOptions(ex?ex.hotelId:(presetHotelId||ui.salesHotel||HOTELS[0].id))}</select></label>
-    <label class="block text-sm">เซลล์ผู้ดูแล<select id="f_sales" class="${inputCls}">${salesOptions(ex?ex.salesId:ui.currentSales)}</select></label>
+    <label class="block text-sm">เซลล์ผู้ดูแล${salesSelectHtml(ex?ex.salesId:ui.currentSales)}</label>
     <label class="block text-sm">ชื่อ Account / งาน<input id="f_account" value="${escAttr(ex?ex.accountName:"")}" class="${inputCls}"/></label>
     <label class="block text-sm">ประเภทดีล<select id="f_dealtype" class="${inputCls}">
       <option value="corporate_room" ${ex&&ex.dealType==='corporate_room'?'selected':''}>Corporate Room</option>
@@ -1423,7 +1509,10 @@ function openPipelineModal(id,presetHotelId){
 }
 function submitPipeline(){
   const id = val("f_id");
-  const data = { hotelId:val("f_hotel"), salesId:val("f_sales"), accountName:val("f_account"),
+  const salesId = isSales() ? mySalesId() : val("f_sales");
+  if(!guardSales(salesId)) return;
+  if(id){ const ex=db.pipeline.find(p=>p.id===id); if(!ex||!guardSales(ex.salesId)) return; }
+  const data = { hotelId:val("f_hotel"), salesId, accountName:val("f_account"),
     dealType:val("f_dealtype"), estValue:Number(val("f_value"))||0, stage:val("f_stage"), expectedCloseDate:val("f_close") };
   if(id){ Object.assign(db.pipeline.find(p=>p.id===id), data); } else { db.pipeline.unshift({ id:uid("pl"), ...data }); }
   saveData(); closeModal(); render();
@@ -1436,7 +1525,7 @@ function openFunctionModal(id,presetHotelId){
   const selHotel = ex ? ex.hotelId : (presetHotelId || (fnHotels.find(h=>h.id===ui.salesHotel)?ui.salesHotel:fnHotels[0].id));
   const body = `
     <label class="block text-sm">โรงแรม<select id="f_hotel" class="${inputCls}">${fnHotels.map(h=>`<option value="${h.id}" ${h.id===selHotel?"selected":""}>${h.name}</option>`).join("")}</select></label>
-    <label class="block text-sm">เซลล์ผู้ดูแล<select id="f_sales" class="${inputCls}">${salesOptions(ex?ex.salesId:ui.currentSales)}</select></label>
+    <label class="block text-sm">เซลล์ผู้ดูแล${salesSelectHtml(ex?ex.salesId:ui.currentSales)}</label>
     <label class="block text-sm">ชื่อลูกค้า/งาน<input id="f_client" value="${escAttr(ex?ex.clientName:"")}" class="${inputCls}"/></label>
     <label class="block text-sm">ประเภทงาน<input id="f_eventtype" value="${escAttr(ex?ex.eventType:"")}" class="${inputCls}" placeholder="เช่น สัมมนา, งานเลี้ยง"/></label>
     <label class="block text-sm">วันจัดงาน<input type="date" id="f_eventdate" value="${ex?ex.eventDate:''}" class="${inputCls}"/></label>
@@ -1449,7 +1538,10 @@ function openFunctionModal(id,presetHotelId){
 }
 function submitFunction(){
   const id = val("f_id");
-  const data = { hotelId:val("f_hotel"), salesId:val("f_sales"), clientName:val("f_client"),
+  const salesId = isSales() ? mySalesId() : val("f_sales");
+  if(!guardSales(salesId)) return;
+  if(id){ const ex=db.functionEvents.find(f=>f.id===id); if(!ex||!guardSales(ex.salesId)) return; }
+  const data = { hotelId:val("f_hotel"), salesId, clientName:val("f_client"),
     eventType:val("f_eventtype"), eventDate:val("f_eventdate"), paxCount:Number(val("f_pax"))||0,
     estRevenue:Number(val("f_revenue"))||0, status:val("f_status") };
   if(id){ Object.assign(db.functionEvents.find(f=>f.id===id), data); } else { db.functionEvents.unshift({ id:uid("fn"), beoSentDate:"", ...data }); }
@@ -1462,7 +1554,7 @@ function openAccountModal(id,presetHotelId){
   const body = `
     <label class="block text-sm">ชื่อบริษัท<input id="f_name" value="${escAttr(ex?ex.name:"")}" class="${inputCls}"/></label>
     <label class="block text-sm">โรงแรมที่เกี่ยวข้อง<select id="f_hotel" class="${inputCls}">${hotelOptions(ex?ex.hotelIds[0]:(presetHotelId||ui.salesHotel||HOTELS[0].id))}</select></label>
-    <label class="block text-sm">เซลล์ผู้ดูแล<select id="f_sales" class="${inputCls}">${salesOptions(ex?ex.salesId:ui.currentSales)}</select></label>
+    <label class="block text-sm">เซลล์ผู้ดูแล${salesSelectHtml(ex?ex.salesId:ui.currentSales)}</label>
     <label class="block text-sm">ผู้ติดต่อ<input id="f_contact" value="${escAttr(ex?ex.contactPerson:"")}" class="${inputCls}" placeholder="ชื่อผู้ติดต่อฝั่งลูกค้า"/></label>
     <label class="block text-sm">เบอร์โทร<input id="f_phone" value="${escAttr(ex?ex.phone:"")}" class="${inputCls}" placeholder="08x-xxx-xxxx"/></label>
     <label class="block text-sm">สถานะ<select id="f_status" class="${inputCls}">${Object.entries(ACCOUNT_STATUS).map(([k,v])=>`<option value="${k}" ${ex&&ex.status===k?'selected':''}>${v}</option>`).join("")}</select></label>
@@ -1476,7 +1568,10 @@ function openAccountModal(id,presetHotelId){
 }
 function submitAccount(){
   const id = val("f_id");
-  const data = { name:val("f_name"), hotelIds:[val("f_hotel")], salesId:val("f_sales"),
+  const salesId = isSales() ? mySalesId() : val("f_sales");
+  if(!guardSales(salesId)) return;
+  if(id){ const ex=db.accounts.find(a=>a.id===id); if(!ex||!guardSales(ex.salesId)) return; }
+  const data = { name:val("f_name"), hotelIds:[val("f_hotel")], salesId,
     contactPerson:val("f_contact"), phone:val("f_phone"), status:val("f_status"),
     roomNightsMTD:Number(val("f_roomnights"))||0, contractRate:Number(val("f_rate"))||0,
     lastContactDate:val("f_lastcontact"), lastContactTopic:val("f_lasttopic") };
@@ -1494,6 +1589,7 @@ function openTargetModal(year){
   document.getElementById("modalRoot").innerHTML = modalShell("แก้ไขเป้าทั้งปี", body, "submitTarget");
 }
 function submitTarget(){
+  if(!guardManage()) return;
   const y = Number(val("f_year"));
   db.targets = db.targets || {};
   db.targets[y] = Number(val("f_target"))||0;
@@ -1528,6 +1624,7 @@ function pickAccent(c){
   });
 }
 function submitHotel(){
+  if(!guardManage()) return;
   const id = val("f_id");
   const name = val("f_name").trim();
   if(!name){ alert("กรุณากรอกชื่อโรงแรม"); return; }
@@ -1538,6 +1635,7 @@ function submitHotel(){
   saveData(); closeModal(); render();
 }
 function deleteHotel(id){
+  if(!guardManage()) return;
   if(db.hotels.length<=1){ alert("ต้องมีโรงแรมอย่างน้อย 1 แห่ง"); return; }
   const used = db.pipeline.some(p=>p.hotelId===id) || db.functionEvents.some(f=>f.hotelId===id)
     || db.accounts.some(a=>(a.hotelIds||[]).includes(id)) || db.activities.some(a=>a.hotelId===id)
@@ -1555,19 +1653,25 @@ function openSalesModal(id){
   const ex = id ? salesById(id) : null;
   const body = `
     <label class="block text-sm">ชื่อฝ่ายขาย<input id="f_name" value="${escAttr(ex?ex.name:"")}" class="${inputCls}" placeholder="เช่น เซลล์ 4 หรือ ชื่อพนักงาน"/></label>
+    <label class="block text-sm">อีเมลสำหรับเข้าระบบ (ไม่บังคับ)
+      <input id="f_email" value="${escAttr(ex?ex.email||"":"")}" class="${inputCls}" placeholder="เช่น sales4@p-plaai.com"/></label>
+    <div class="text-xs text-slate-400">ถ้าใส่อีเมลไว้ พนักงานคนนี้ล็อกอินด้วยอีเมลนั้นจะแก้ได้เฉพาะข้อมูลของตัวเอง (ทางเลือกแทนการกำหนดในโค้ด SALES_EMAILS)</div>
     <input type="hidden" id="f_id" value="${ex?ex.id:''}"/>`;
   const footer = ex ? `<button type="button" onclick="deleteSales('${ex.id}')" class="text-rose-500 text-xs">ลบเซลล์คนนี้</button>` : "";
   document.getElementById("modalRoot").innerHTML = modalShell(ex?"แก้ไขฝ่ายขาย":"เพิ่มฝ่ายขายใหม่", body, "submitSales", footer);
 }
 function submitSales(){
+  if(!guardManage()) return;
   const id = val("f_id");
   const name = val("f_name").trim();
+  const email = (val("f_email")||"").trim().toLowerCase();
   if(!name){ alert("กรุณากรอกชื่อฝ่ายขาย"); return; }
-  if(id){ Object.assign(salesById(id), { name }); }
-  else { const nid=uid("s"); db.salesReps.push({ id:nid, name }); ui.currentSales=nid; }
+  if(id){ Object.assign(salesById(id), { name, email }); }
+  else { const nid=uid("s"); db.salesReps.push({ id:nid, name, email }); ui.currentSales=nid; }
   saveData(); closeModal(); render();
 }
 function deleteSales(id){
+  if(!guardManage()) return;
   if(db.salesReps.length<=1){ alert("ต้องมีฝ่ายขายอย่างน้อย 1 คน"); return; }
   const used = db.pipeline.some(p=>p.salesId===id) || db.functionEvents.some(f=>f.salesId===id)
     || db.accounts.some(a=>a.salesId===id) || db.activities.some(a=>a.salesId===id);
@@ -1709,6 +1813,7 @@ function updateRevTotal(){
   const el = document.getElementById("revTotal"); if(el) el.textContent = fmtMoney(t);
 }
 function submitRevenue(){
+  if(!guardRevenue()) return;
   const hid = val("f_hotel"), month = val("f_month");
   if(!month){ alert("กรุณาเลือกเดือน"); return; }
   const data = {}; REVENUE_CH_KEYS.forEach(k=>data[k]=Number(val("f_"+k))||0);
@@ -1718,6 +1823,7 @@ function submitRevenue(){
   saveData(); closeModal(); render();
 }
 function deleteRevenue(hid,month){
+  if(!guardRevenue()) return;
   if(!confirm("ล้างยอดขายของเดือนนี้?")) return;
   db.revenue = db.revenue.filter(r=>!(r.hotelId===hid && r.month===month));
   saveData(); closeModal(); render();
@@ -1780,7 +1886,7 @@ function autoActionItems(){
   return items;
 }
 function manualPlanReps(){ return ui.reportRep==="all" ? SALES_REPS.slice() : (salesById(ui.reportRep)?[salesById(ui.reportRep)]:[]); }
-function saveRepPlan(sid,value){ if(readOnly())return; const r=salesById(sid); if(r){ r.actionPlan=value; saveData(); } }
+function saveRepPlan(sid,value){ if(!canEditSales(sid))return; const r=salesById(sid); if(r){ r.actionPlan=value; saveData(); } }
 
 function drawReportChart(){
   const c=document.getElementById("rep-split"); if(!c) return;
@@ -1911,7 +2017,7 @@ function renderSalesReport(){
       ${manualPlanReps().map(r=>`
         <div>
           ${ui.reportRep==="all"?`<div class="text-sm font-semibold text-slate-700 mb-1">${r.name}</div>`:""}
-          <textarea ${roDisabled()} rows="4" onchange="saveRepPlan('${r.id}',this.value)"
+          <textarea ${dSales(r.id)} rows="4" onchange="saveRepPlan('${r.id}',this.value)"
             class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-200"
             placeholder="เช่น ปิดดีลบริษัท ABC ภายในสิ้นเดือน · โทรหาลูกค้าเก่า 5 ราย · ส่ง BEO งานสัมมนา">${escAttr(r.actionPlan||"")}</textarea>
         </div>`).join("")}
@@ -1925,10 +2031,120 @@ function renderSalesReport(){
 // EXPORT / IMPORT
 // ============================================================
 function exportData(){
+  if(!guardManage()) return;
   const blob = new Blob([JSON.stringify(db,null,2)],{ type:"application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href=url; a.download="plaai_sales_data_"+todayStr()+".json"; a.click(); URL.revokeObjectURL(url);
+}
+
+// ============================================================
+// นำเข้า/ส่งออก "ตัวเลขยอดขายรายเดือน" เป็น Excel / CSV
+//   - ส่งออก: ได้ตารางยอดขายทั้งปี (แต่ละโรงแรม × 12 เดือน × ทุกช่องทาง)
+//   - นำเข้า: อัปเดตตัวเลขทีเดียวหลายเดือน (ไม่ต้องแก้ทีละช่อง) เหมาะกับฝ่ายบัญชี
+//   คอลัมน์: hotelId | โรงแรม | เดือน(YYYY-MM) | OTA | FIT | Walk-in | Corporate | อื่นๆ | ยอดรวมเหมา(lump)
+// ============================================================
+const REVENUE_XLS_HEADER = ["hotelId","โรงแรม","เดือน(YYYY-MM)","OTA","FIT","Walk-in","Corporate","อื่นๆ","ยอดรวมเหมา(lump)"];
+// ลำดับช่องทางให้ตรงกับหัวตาราง (คอลัมน์ที่ 4 เป็นต้นไป)
+const REVENUE_XLS_CHANNELS = ["ota","fit","walkin","sales","other","lump"];
+function revenueRowsForYear(y){
+  const rows = [REVENUE_XLS_HEADER.slice()];
+  HOTELS.forEach(h=>{
+    for(let m=1;m<=12;m++){
+      const key = monthKey(y,m); const e = revEntry(h.id,key) || {};
+      rows.push([ h.id, h.name, key,
+        Number(e.ota)||0, Number(e.fit)||0, Number(e.walkin)||0,
+        Number(e.sales)||0, Number(e.other)||0, Number(e.lump)||0 ]);
+    }
+  });
+  return rows;
+}
+function exportRevenueExcel(){
+  if(typeof XLSX==="undefined"){ alert("ไลบรารี Excel ยังโหลดไม่เสร็จ กรุณาลองใหม่ หรือใช้ปุ่ม CSV แทน"); return; }
+  const y = ui.ownerYear || new Date().getFullYear();
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(revenueRowsForYear(y)), "ยอดขาย "+(y+543));
+  XLSX.writeFile(wb, "plaai_ยอดขาย_"+y+".xlsx");
+}
+function exportRevenueCSV(){
+  const y = ui.ownerYear || new Date().getFullYear();
+  const csv = "﻿" + aoaToCsv(revenueRowsForYear(y)); // BOM ให้ Excel อ่านภาษาไทยถูก
+  const blob = new Blob([csv],{ type:"text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href=url; a.download="plaai_ยอดขาย_"+y+".csv"; a.click(); URL.revokeObjectURL(url);
+}
+// จับคู่คอลัมน์จากหัวตาราง (รองรับสลับตำแหน่ง/พิมพ์ต่างเล็กน้อย)
+function revColMap(header){
+  const idx = { hotelId:-1, name:-1, month:-1, ota:-1, fit:-1, walkin:-1, sales:-1, other:-1, lump:-1 };
+  header.forEach((raw,i)=>{
+    const h = String(raw||"").toLowerCase().trim();
+    if(h.includes("hotelid")) idx.hotelId=i;
+    else if(h.includes("โรงแรม")||h==="hotel") idx.name=i;
+    else if(h.includes("เดือน")||h.includes("month")) idx.month=i;
+    else if(h.includes("ota")) idx.ota=i;
+    else if(h.includes("fit")) idx.fit=i;
+    else if(h.includes("walk")) idx.walkin=i;
+    else if(h.includes("corporate")||h.includes("ฝ่ายขาย")||h.includes("คอร์ปอเรท")) idx.sales=i;
+    else if(h.includes("อื่น")||h.includes("other")) idx.other=i;
+    else if(h.includes("lump")||h.includes("เหมา")||h.includes("ยอดรวม")) idx.lump=i;
+  });
+  return idx;
+}
+function normMonthCell(v){
+  if(v==null) return "";
+  // เผื่อ Excel ส่งมาเป็น Date object
+  if(v instanceof Date){ return v.getFullYear()+"-"+String(v.getMonth()+1).padStart(2,"0"); }
+  const s = String(v).trim();
+  const m = s.match(/(\d{4})[-/](\d{1,2})/);
+  if(m) return m[1]+"-"+String(Number(m[2])).padStart(2,"0");
+  return "";
+}
+function applyRevenueImport(aoa){
+  if(!aoa || !aoa.length) throw new Error("ไฟล์ว่าง");
+  const header = aoa[0];
+  const idx = revColMap(header);
+  if(idx.month===-1 || (idx.hotelId===-1 && idx.name===-1))
+    throw new Error("ไม่พบคอลัมน์ 'เดือน' หรือ 'โรงแรม/hotelId' — กรุณาใช้ไฟล์ที่ส่งออกจากปุ่ม Excel/CSV เป็นแม่แบบ");
+  let updated=0, skipped=0;
+  for(let r=1;r<aoa.length;r++){
+    const row = aoa[r]; if(!row || !row.length) continue;
+    const month = normMonthCell(idx.month>=0?row[idx.month]:"");
+    if(!/^\d{4}-\d{2}$/.test(month)){ skipped++; continue; }
+    // หา hotelId: จาก hotelId ก่อน ถ้าไม่มี match ด้วยชื่อโรงแรม
+    let hid = idx.hotelId>=0 ? String(row[idx.hotelId]||"").trim() : "";
+    if(!hid || !hotelById(hid)){
+      const nm = idx.name>=0 ? String(row[idx.name]||"").trim() : "";
+      const h = HOTELS.find(x=>x.name===nm) || (hid?hotelById(hid):null);
+      hid = h ? h.id : "";
+    }
+    if(!hid || !hotelById(hid)){ skipped++; continue; }
+    const num = i => (i>=0 ? Number(String(row[i]).replace(/[,\s฿]/g,""))||0 : 0);
+    const data = { ota:num(idx.ota), fit:num(idx.fit), walkin:num(idx.walkin),
+      sales:num(idx.sales), other:num(idx.other), lump:num(idx.lump) };
+    const e = revEntry(hid,month);
+    if(e){ Object.assign(e,data); } else { db.revenue.push({ id:uid("rev"), hotelId:hid, month, ...data }); }
+    updated++;
+  }
+  return { updated, skipped };
+}
+function importRevenueFile(evt){
+  if(!guardRevenue()){ evt.target.value=""; return; }
+  if(typeof XLSX==="undefined"){ alert("ไลบรารี Excel ยังโหลดไม่เสร็จ กรุณาลองใหม่อีกครั้ง"); evt.target.value=""; return; }
+  const file = evt.target.files[0]; if(!file){ return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    try{
+      const wb = XLSX.read(new Uint8Array(reader.result), { type:"array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const aoa = XLSX.utils.sheet_to_json(ws, { header:1, raw:true, defval:"" });
+      const res = applyRevenueImport(aoa);
+      saveData(); render();
+      alert("นำเข้ายอดขายสำเร็จ ✓\nอัปเดต "+res.updated+" เดือน"+(res.skipped?("\nข้าม "+res.skipped+" แถวที่อ่านไม่ได้"):""));
+    }catch(e){ alert("นำเข้าไม่สำเร็จ: "+(e.message||e)); }
+    evt.target.value="";
+  };
+  reader.readAsArrayBuffer(file);
 }
 
 // ---- Sales report exports (Excel / CSV / Email) ----
@@ -2073,7 +2289,7 @@ async function emailReport(){
   window.location.href = mailto;
 }
 function importData(evt){
-  if(!guardEdit()) return;
+  if(!guardManage()){ evt.target.value=""; return; }
   const file = evt.target.files[0]; if(!file) return;
   const reader = new FileReader();
   reader.onload = () => {
