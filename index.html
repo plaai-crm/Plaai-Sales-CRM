@@ -267,6 +267,16 @@ function canEditGroups(){ if(!CLOUD) return true; const r=userRole(); return r==
 function canEditForecast(){ if(!CLOUD) return true; const r=userRole(); return r==="owner"||r==="sales"; }
 // แก้โครงสร้างระบบ (โรงแรม/เซลล์/เป้า/ปี/สำรองข้อมูล) — เจ้าของเท่านั้น
 function canManage(){ if(!CLOUD) return true; return userRole()==="owner"; }
+// ---- สิทธิ์ในหน้า "ปฏิทินอีเวนต์" ----
+// เพิ่ม/แก้ "ข้อมูลอีเวนต์ + แผน Activity" (ฝ่ายขายเป็นคนกรอก) — เจ้าของ + ฝ่ายขาย
+function canEditEventInfo(){ if(!CLOUD) return true; const r=userRole(); return r==="owner"||r==="sales"; }
+// แก้ "แผนการทำราคา/Yield ของตึกใดตึกหนึ่ง" — เจ้าของ (ทุกตึก) + ผจก.โรงแรมของตึกนั้น
+function canEditPricing(hid){ if(!CLOUD) return true; const r=userRole();
+  if(r==="owner") return true;
+  if(r==="hm") return allowedHotelIds().includes(hid);
+  return false; }
+// มีสิทธิ์แก้ราคาอย่างน้อย 1 ตึกไหม (ใช้ตัดสินว่าจะโชว์คำอธิบายให้ ผจก.)
+function canEditAnyPricing(){ return HOTELS.some(h=>canEditPricing(h.id)); }
 function guardSales(salesId){ if(canEditSales(salesId)) return true; alert("บัญชีนี้แก้ได้เฉพาะข้อมูลของเซลล์ตัวเองเท่านั้น"); return false; }
 function guardRevenue(){ if(canEditRevenue()) return true; alert("เฉพาะเจ้าของกิจการ ฝ่ายบัญชี หรือฝ่ายขายเท่านั้นที่แก้ไขตัวเลขยอดขายได้"); return false; }
 function guardGroups(){ if(canEditGroups()) return true; alert("เฉพาะเจ้าของกิจการหรือฝ่ายบัญชีเท่านั้นที่แก้ไขรายชื่อกลุ่มลูกค้าได้"); return false; }
@@ -374,6 +384,7 @@ function fmtM(n){ n=Number(n)||0; const a=Math.abs(n);
   if(a>=1e3) return (n<0?"-":"")+"฿"+Math.round(a/1e3)+"K";
   return "฿"+n.toLocaleString("th-TH"); }
 function daysDiff(dateStr){ const d=new Date(dateStr), t=new Date(todayStr()); return Math.round((d-t)/86400000); }
+function addDaysStr(dateStr,n){ if(!dateStr) return ""; const d=new Date(dateStr); d.setDate(d.getDate()+(Number(n)||0)); return d.toISOString().slice(0,10); }
 function ymKey(dateStr){ return (dateStr||"").slice(0,7); }
 function currentMonthKey(){ return todayStr().slice(0,7); }
 function addMonthsKey(key,n){ let [y,m]=key.split("-").map(Number); m+=n; while(m>12){m-=12;y+=1;} while(m<1){m+=12;y-=1;} return y+"-"+String(m).padStart(2,"0"); }
@@ -513,7 +524,18 @@ function normalizeData(){
   db.partners      = (db.partners||[]).map(x=>({ year:null, roomNights:0, revenue:0, ...x }));
   db.newCompanies  = (db.newCompanies||[]).map(x=>({ roomNights:0, revenue:0, note:"", ...x }));
   db.lostBusiness  = (db.lostBusiness||[]).map(x=>({ reason:"", value:0, note:"", lastDate:"", ...x }));
-  db.events        = (db.events||[]).map(x=>({ year:null, location:"", startDate:"", days:1, note:"", ...x }));
+  // ---- Event ทั้งปี (ปฏิทินอีเวนต์ในโซน · ใช้ร่วมกันทุกโรงแรม) ----
+  // ขยายฟิลด์: จังหวัด/เขต-อำเภอ/สถานที่ · วันเริ่ม-สิ้นสุด · ประเภท · ขนาดงาน · ผลกระทบ
+  //           · แผน Activity (ฝ่ายขายกรอก) · แผนการทำราคา/Yield รายตึก (ผจก.แต่ละตึกกรอก)
+  db.events        = (db.events||[]).map(x=>({ year:null, hotelId:"", hotelIds:null, location:"", venue:"", province:"", district:"",
+                        startDate:"", endDate:"", days:1, category:"", scale:"", impact:"", salesId:"",
+                        activityPlan:"", pricingPlans:{}, note:"", ...x }));
+  db.events.forEach(e=>{
+    if(!e.venue && e.location) e.venue = e.location;             // ย้ายค่าสถานที่เดิม → venue
+    if(!e.endDate) e.endDate = e.startDate ? addDaysStr(e.startDate,(Number(e.days)||1)-1) : "";
+    if(!e.pricingPlans || typeof e.pricingPlans!=="object") e.pricingPlans = {};
+    if(!e.year && e.startDate) e.year = Number(e.startDate.slice(0,4))||null;
+  });
   db.opportunities = (db.opportunities||[]).map(x=>({ value:0, stage:"lead", actionPlan:"", ...x }));
   const cy = new Date().getFullYear();
   db.years = (db.years && db.years.length) ? db.years : [cy];
@@ -522,9 +544,13 @@ function normalizeData(){
   db.targets = db.targets || {};
   db.hotelTargets = db.hotelTargets || {};   // { hotelId: { year: number } } — เป้ารายโรงแรม
 }
+// ห้ามเขียนขึ้นคลาวด์เฉพาะ "ผู้ดูอย่างเดียวจริง ๆ" (viewer)
+// หมายเหตุ: ผู้จัดการโรงแรม (hm) ต้องเขียนได้ เพื่อบันทึก "แผนการทำราคา/Yield" ของตึกตัวเอง
+//           ในหน้าปฏิทินอีเวนต์ (ส่วนอื่นถูกล็อกด้วยสิทธิ์รายฟังก์ชันอยู่แล้ว)
+function blockCloudWrite(){ if(!CLOUD) return false; return userRole()==="viewer"; }
 function saveData(){
   localStorage.setItem(STORAGE_KEY, JSON.stringify(db));       // แคชในเครื่องเสมอ
-  if (CLOUD && !applyingRemote && !readOnly()) cloudSyncChanges(); // ซิงค์เฉพาะ “รายการที่เปลี่ยน” ขึ้นคลาวด์
+  if (CLOUD && !applyingRemote && !blockCloudWrite()) cloudSyncChanges(); // ซิงค์เฉพาะ “รายการที่เปลี่ยน” ขึ้นคลาวด์
 }
 
 // ---- ซิงค์แบบแยกรายการ: หา “อะไรเปลี่ยน” เทียบ snapshot แล้วส่งเฉพาะรายการนั้น ----
@@ -659,7 +685,8 @@ function setCloudStatus(state){
 // ---------- Global UI state ----------
 let ui = { role:"sales", currentSales:"s1", currentHotelTab:"group", salesHotel:null, today:null, year:null, ownerTab:"group", ownerYear:null, ownerYearB:null,
            finHotel:null, finYear:null,
-           page:null, reportRep:"all", reportFrom:null, reportTo:null, reportEmail:"" };
+           page:null, reportRep:"all", reportFrom:null, reportTo:null, reportEmail:"",
+           boardYear:null, boardProvince:"all", boardHotel:"all" };
 
 // ---------- data helpers ----------
 function hotelById(id){ return HOTELS.find(h=>h.id===id); }
@@ -762,6 +789,7 @@ function render(){
   document.body.classList.toggle("readonly", readOnly());
   guardHotelScope();
   const mainView = ui.page==="salesReport" ? renderSalesReport()
+                 : ui.page==="eventBoard" ? renderEventBoard()
                  : ui.role==="present" ? renderPresentView()
                  : ui.role==="sales" ? renderSalesView()
                  : ui.role==="finance" ? renderFinanceView()
@@ -778,6 +806,8 @@ function render(){
   if (ui.page==="salesReport"){
     /* report page draws its own charts */
     drawReportChart();
+  } else if (ui.page==="eventBoard"){
+    /* หน้าปฏิทินอีเวนต์ไม่มีกราฟ */
   } else if (ui.role==="present"){
     drawPresentCharts();
   } else if (ui.role==="gm"){
@@ -829,6 +859,8 @@ function renderTopBar(){
         </div>
         <button onclick="openSalesReport()" title="ดึงรายงานฝ่ายขายรายคน (เลือกช่วงวันที่ · Export Excel/CSV · ส่งอีเมล)"
                 class="btn text-xs px-3 py-1.5 font-semibold ${ui.page==='salesReport'?'bg-white text-cyan-800':'bg-white/20 hover:bg-white/30 text-white'}">📄 รายงานเซลล์</button>
+        <button onclick="openEventBoard()" title="ปฏิทินอีเวนต์ทั้งปี · สื่อสารระหว่างฝ่ายขายกับผู้จัดการโรงแรม เพื่อวางแผนราคา/Yield ในช่วงมีอีเวนต์"
+                class="btn text-xs px-3 py-1.5 font-semibold ${ui.page==='eventBoard'?'bg-white text-cyan-800':'bg-white/20 hover:bg-white/30 text-white'}">📅 ปฏิทินอีเวนต์</button>
         ${CLOUD ? roleBadgeHtml() : ""}
         ${CLOUD ? `<span id="cloudStatus" class="text-xs" style="color:#a7f3d0;">●</span>` : `<span class="text-xs" style="color:#fde68a;" title="กำลังใช้งานแบบออฟไลน์ในเครื่องนี้">ออฟไลน์</span>`}
         <button onclick="showWeeklySummary()" title="สร้าง/ส่งสรุปยอดขายประจำสัปดาห์เข้า LINE" class="btn text-xs bg-white/20 hover:bg-white/30 text-white px-3 py-1.5">📤 สรุปสัปดาห์</button>
@@ -847,6 +879,8 @@ function kpiCard(label,value,sub,gradient){
     <div class="lbl">${label}</div><div class="num">${value}</div><div class="sub">${sub}</div></div>`;
 }
 function escAttr(s){ return String(s||"").replace(/'/g,"&#39;").replace(/"/g,"&quot;"); }
+// escape สำหรับข้อความที่แสดงใน HTML (กัน < > & และคงบรรทัดใหม่ด้วย white-space:pre-line ที่ฝั่ง CSS)
+function escHtml(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 
 // gradients (clean modern family)
 // gradients are colour-matched to their action button so a metric and its
@@ -864,6 +898,22 @@ const G = {
 // ============================================================
 // SALES VIEW
 // ============================================================
+// ---- ปิดแจ้งเตือน "สิ่งที่ต้องติดตามวันนี้" โดยบันทึกว่าทำจริงแล้ว ----
+// ติ๊ก "ทำแล้ว" ที่ Account เงียบ = บันทึกว่าติดต่อวันนี้ (lastContactDate = วันนี้) → แจ้งเตือนหายเอง
+function markAccountContacted(accId){
+  const a = db.accounts.find(x=>x.id===accId); if(!a) return;
+  if(!guardSales(a.salesId)) { render(); return; }
+  a.lastContactDate = todayStr();
+  saveData(); render();
+}
+// ติ๊ก "ทำแล้ว" ที่งาน Function = บันทึกว่าส่ง BEO แล้ว (status = beo_sent) → แจ้งเตือนหายเอง
+function markFunctionBeoSent(fnId){
+  const f = db.functionEvents.find(x=>x.id===fnId); if(!f) return;
+  if(!guardSales(f.salesId)) { render(); return; }
+  f.status = "beo_sent";
+  if(!f.beoSentDate) f.beoSentDate = todayStr();
+  saveData(); render();
+}
 function renderSalesView(){
   const sid = ui.currentSales;
   const rep = salesById(sid);
@@ -909,10 +959,21 @@ function renderSalesView(){
 
   ${(overdue.length||upcoming.length)?`
   <div class="rounded-2xl p-4 mb-5 border" style="background:#fff5f6;border-color:#fecdd3;">
-    <div class="font-semibold text-rose-800 mb-2">⚠ สิ่งที่ต้องติดตามวันนี้ (${rep.name})</div>
-    <ul class="text-sm text-rose-700 space-y-1">
-      ${overdue.map(a=>`<li>• Account "<b>${a.name}</b>" ไม่ได้ติดต่อมา ${Math.abs(daysDiff(a.lastContactDate))} วันแล้ว</li>`).join("")}
-      ${upcoming.map(f=>`<li>• งาน Function "<b>${f.clientName}</b>" (${hotelById(f.hotelId).name}) อีก ${daysDiff(f.eventDate)} วัน — ยังไม่ส่ง BEO</li>`).join("")}
+    <div class="flex items-center justify-between mb-2">
+      <div class="font-semibold text-rose-800">⚠ สิ่งที่ต้องติดตามวันนี้ (${rep.name})</div>
+      ${editable?`<span class="text-xs text-rose-400">ติ๊ก “ทำแล้ว” เมื่อทำจริง แล้วแจ้งเตือนจะหายไป</span>`:""}
+    </div>
+    <ul class="text-sm text-rose-700 space-y-1.5">
+      ${overdue.map(a=>`<li class="flex items-start gap-2">
+        ${editable?`<label class="inline-flex items-center gap-1 shrink-0 cursor-pointer text-teal-700 font-medium" title="บันทึกว่าติดต่อลูกค้ารายนี้แล้ววันนี้">
+          <input type="checkbox" onclick="markAccountContacted('${a.id}')" class="w-4 h-4 accent-teal-600"/> ทำแล้ว</label>`:"<span>•</span>"}
+        <span>Account "<b>${a.name}</b>" ไม่ได้ติดต่อมา ${Math.abs(daysDiff(a.lastContactDate))} วันแล้ว${editable?` <span class="text-rose-400">(ติ๊ก = บันทึกว่าติดต่อวันนี้)</span>`:""}</span>
+      </li>`).join("")}
+      ${upcoming.map(f=>`<li class="flex items-start gap-2">
+        ${editable?`<label class="inline-flex items-center gap-1 shrink-0 cursor-pointer text-teal-700 font-medium" title="บันทึกว่าส่ง BEO ให้ครัว/ทีมงานแล้ว">
+          <input type="checkbox" onclick="markFunctionBeoSent('${f.id}')" class="w-4 h-4 accent-teal-600"/> ทำแล้ว</label>`:"<span>•</span>"}
+        <span>งาน Function "<b>${f.clientName}</b>" (${hotelById(f.hotelId).name}) อีก ${daysDiff(f.eventDate)} วัน — ยังไม่ส่ง BEO${editable?` <span class="text-rose-400">(ติ๊ก = บันทึกว่าส่ง BEO แล้ว)</span>`:""}</span>
+      </li>`).join("")}
     </ul>
   </div>`:""}
 
@@ -2789,7 +2850,9 @@ function scopeMatch(x){ return ui.presScope==="group" ? canSeeHotel(x.hotelId) :
 function presPartnersList(){ return (db.partners||[]).filter(x=>scopeMatch(x) && (!x.year || Number(x.year)===ui.presYear)).sort((a,b)=>(Number(b.revenue)||0)-(Number(a.revenue)||0)).slice(0,10); }
 function presNewList(){ return (db.newCompanies||[]).filter(scopeMatch).sort((a,b)=>String(b.date||"").localeCompare(String(a.date||""))); }
 function presLostList(){ return (db.lostBusiness||[]).filter(scopeMatch).sort((a,b)=>String(a.lastDate||"").localeCompare(String(b.lastDate||""))); }
-function presEventsList(){ return (db.events||[]).filter(x=>scopeMatch(x) && (!x.year || Number(x.year)===ui.presYear)).sort((a,b)=>String(a.startDate||"").localeCompare(String(b.startDate||""))); }
+// อีเวนต์ในโซน "เห็นได้ทุกตึก" → ถ้าไม่ได้ผูกโรงแรมใดโดยเฉพาะ ให้แสดงในภาพรวม/ทุกตึก
+function eventScopeMatch(x){ if(!x.hotelId) return true; return ui.presScope==="group" ? canSeeHotel(x.hotelId) : x.hotelId===ui.presScope; }
+function presEventsList(){ return (db.events||[]).filter(x=>eventScopeMatch(x) && (!x.year || Number(x.year)===ui.presYear)).sort((a,b)=>String(a.startDate||"").localeCompare(String(b.startDate||""))); }
 function presOppList(){ return (db.opportunities||[]).filter(scopeMatch).sort((a,b)=>(Number(b.value)||0)-(Number(a.value)||0)); }
 function humanGap(dateStr){ if(!dateStr) return "—"; const d=Math.max(0,-daysDiff(dateStr)); if(d>=30){ const mo=Math.floor(d/30), rem=d%30; return mo+" เดือน"+(rem?(" "+rem+" วัน"):""); } return d+" วัน"; }
 function hotelChip(hid){ const h=hotelById(hid); return h?`<span class="text-xs text-slate-400">${h.name}</span>`:""; }
@@ -3143,6 +3206,458 @@ function exportPresentExcel(){
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([["งาน","โรงแรม","สถานที่","วันเริ่ม","จำนวนวัน","หมายเหตุ"],...presEventsList().map(x=>[x.name,hotelById(x.hotelId)?.name||"",x.location||"","'"+(x.startDate||""),Number(x.days)||1,x.note||""])]),"Events");
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([["ลูกค้า/ดีล","โรงแรม","มูลค่า","สถานะ","Action Plan"],...presOppList().map(x=>[x.name,hotelById(x.hotelId)?.name||"",Number(x.value)||0,PIPELINE_STAGES[x.stage]||x.stage||"",x.actionPlan||""])]),"Opportunity");
   XLSX.writeFile(wb,"plaai_present_"+sn+"_"+y+".xlsx");
+}
+
+// ============================================================
+// EVENT BOARD — ปฏิทินอีเวนต์ทั้งปี (หน้าสื่อสารฝ่ายขาย ⇄ ผจก.โรงแรม)
+// เป้าหมาย: ฝ่ายขายแจ้งอีเวนต์ในโซน (เห็นได้ทุกตึก) → ผจก.แต่ละตึกกรอกแผนราคา/Yield
+//           โฟกัสเดือนปัจจุบัน + อีก 2 เดือนข้างหน้า และดูภาพรวมได้ทั้งปี
+// ============================================================
+const EVENT_CATS = {
+  concert:"🎵 คอนเสิร์ต/ดนตรี", sport:"🏆 กีฬา/แข่งขัน", festival:"🎉 เทศกาล/งานประจำปี",
+  mice:"💼 ประชุม/สัมมนา (MICE)", expo:"🏛️ งานแสดงสินค้า/Expo", concert_fair:"🎪 งานวัด/งานแฟร์",
+  government:"🏵️ งานราชการ", holiday:"📆 วันหยุด/วันหยุดยาว", other:"📌 อื่น ๆ"
+};
+const CAT_COLOR = { concert:"#7c3aed", sport:"#0369a1", festival:"#b45309", mice:"#0e7490",
+  expo:"#0891b2", concert_fair:"#be123c", government:"#155e75", holiday:"#0f766e", other:"#64748b" };
+const IMPACT_LABEL = { high:"ผลกระทบสูง", medium:"ผลกระทบกลาง", low:"ผลกระทบต่ำ" };
+const IMPACT_BADGE = { high:"background:#fee2e2;color:#b91c1c;", medium:"background:#fef3c7;color:#b45309;", low:"background:#e0f2fe;color:#0369a1;" };
+const IMPACT_DOT = { high:"#dc2626", medium:"#d97706", low:"#0284c7" };
+// จังหวัด: ครบทั้ง 77 จังหวัดของไทย (พิมพ์ค้นหาได้จาก datalist) — เรียงจังหวัดในโซนขึ้นก่อนเพื่อความสะดวก
+const PROVINCE_SUGGEST = [
+  "ชลบุรี","ระยอง","กรุงเทพมหานคร","สมุทรปราการ","ฉะเชิงเทรา","ปราจีนบุรี","จันทบุรี","สระแก้ว","ตราด","นครนายก",
+  "กระบี่","กาญจนบุรี","กาฬสินธุ์","กำแพงเพชร","ขอนแก่น","ชัยนาท","ชัยภูมิ","ชุมพร","เชียงราย","เชียงใหม่",
+  "ตรัง","ตาก","นครปฐม","นครพนม","นครราชสีมา","นครศรีธรรมราช","นครสวรรค์","นนทบุรี","นราธิวาส","น่าน",
+  "บึงกาฬ","บุรีรัมย์","ปทุมธานี","ประจวบคีรีขันธ์","ปัตตานี","พระนครศรีอยุธยา","พะเยา","พังงา","พัทลุง","พิจิตร",
+  "พิษณุโลก","เพชรบุรี","เพชรบูรณ์","แพร่","ภูเก็ต","มหาสารคาม","มุกดาหาร","แม่ฮ่องสอน","ยโสธร","ยะลา",
+  "ร้อยเอ็ด","ระนอง","ราชบุรี","ลพบุรี","ลำปาง","ลำพูน","เลย","ศรีสะเกษ","สกลนคร","สงขลา",
+  "สตูล","สมุทรสงคราม","สมุทรสาคร","สระบุรี","สิงห์บุรี","สุโขทัย","สุพรรณบุรี","สุราษฎร์ธานี","สุรินทร์","หนองคาย",
+  "หนองบัวลำภู","อ่างทอง","อำนาจเจริญ","อุดรธานี","อุตรดิตถ์","อุทัยธานี","อุบลราชธานี"
+];
+const DISTRICT_SUGGEST = ["ศรีราชา","บางละมุง","เมืองชลบุรี","สัตหีบ","พานทอง","พนัสนิคม",
+  "ปลวกแดง","นิคมพัฒนา","บ้านฉาง","เมืองระยอง","แกลง"];
+
+// ---- event helpers ----
+function evStart(x){ return x.startDate||""; }
+function evEnd(x){ return x.endDate||x.startDate||""; }
+function evDays(x){
+  if(x.startDate && x.endDate){ const d=Math.round((new Date(x.endDate)-new Date(x.startDate))/86400000)+1; return d>0?d:1; }
+  return Number(x.days)||1;
+}
+function evInMonth(x,key){ const s=ymKey(evStart(x)), e=ymKey(evEnd(x)); if(!s) return false; return s<=key && e>=key; }
+function evInYear(x,y){ y=Number(y);
+  const ys=Number(evStart(x).slice(0,4)), ye=Number(evEnd(x).slice(0,4));
+  if(ys===y || ye===y) return true;
+  if(!evStart(x) && Number(x.year)===y) return true;
+  return false;
+}
+function evDateLabel(x){
+  const s=evStart(x), e=evEnd(x);
+  if(!s) return "— ยังไม่ระบุวันที่ —";
+  const fmt=d=>{ const [yy,mm,dd]=d.split("-"); return Number(dd)+" "+THAI_MONTHS[Number(mm)-1]; };
+  if(!e || e===s) return fmt(s)+" "+s.slice(0,4);
+  if(s.slice(0,7)===e.slice(0,7)){ const [,,dd]=s.split("-"); return Number(dd)+"–"+fmt(e)+" "+e.slice(0,4); }
+  return fmt(s)+" – "+fmt(e)+" "+e.slice(0,4);
+}
+function yieldEntry(ev,hid){ const p=ev.pricingPlans && ev.pricingPlans[hid]; if(!p) return null;
+  if(typeof p==="string") return { text:p, by:"", at:"" }; return p; }
+function eventLocLabel(x){
+  const parts=[]; if(x.venue) parts.push(x.venue);
+  const geo=[x.district,x.province].filter(Boolean).join(", ");
+  if(geo) parts.push(geo);
+  return parts.join(" · ") || "— ยังไม่ระบุสถานที่ —";
+}
+// ---- โรงแรมที่เกี่ยวข้องกับอีเวนต์ ----
+// ถ้าติ๊กเลือกไว้ = ใช้เฉพาะที่ติ๊ก · ถ้ายังไม่เคยติ๊ก (อีเวนต์เดิม) = ถือว่าเกี่ยวข้องทุกโรงแรม
+function eventHotelIds(x){
+  const ids=(Array.isArray(x.hotelIds)?x.hotelIds:[]).filter(id=>hotelById(id));
+  return ids.length ? ids : HOTELS.map(h=>h.id);
+}
+function eventHotels(x){ const s=new Set(eventHotelIds(x)); return HOTELS.filter(h=>s.has(h.id)); }
+function eventHasExplicitHotels(x){ return Array.isArray(x.hotelIds) && x.hotelIds.filter(id=>hotelById(id)).length>0; }
+
+function ensureBoardDefaults(){
+  const cy=new Date().getFullYear();
+  if(!ui.boardYear) ui.boardYear=cy;
+  if(!ui.boardProvince) ui.boardProvince="all";
+  if(!ui.boardHotel) ui.boardHotel="all";
+}
+function openEventBoard(){ ensureBoardDefaults(); ui.page="eventBoard"; render(); }
+function closeEventBoard(){ ui.page=null; render(); }
+function setBoardYear(v){ ui.boardYear=Number(v); render(); }
+function setBoardProvince(v){ ui.boardProvince=v; render(); }
+function setBoardHotel(v){ ui.boardHotel=v; render(); }
+
+function boardEventsFiltered(){
+  const prov=ui.boardProvince, hid=ui.boardHotel;
+  return (db.events||[]).filter(x=>{
+    if(prov!=="all" && (x.province||"")!==prov) return false;
+    if(hid!=="all"){ // กรอง "ตึกที่เกี่ยวข้อง": ตึกที่ติ๊กเลือก (หรือมีแผนราคาแล้ว)
+      const rel = eventHotelIds(x).includes(hid) || (x.pricingPlans && x.pricingPlans[hid]);
+      if(!rel) return false;
+    }
+    return true;
+  });
+}
+function boardProvinceOptions(){
+  const set=new Set((db.events||[]).map(x=>x.province).filter(Boolean));
+  const provs=[...set].sort();
+  return `<option value="all" ${ui.boardProvince==="all"?"selected":""}>ทุกจังหวัด</option>`+
+    provs.map(p=>`<option value="${escAttr(p)}" ${ui.boardProvince===p?"selected":""}>${p}</option>`).join("");
+}
+function boardYearOptions(){
+  const cy=new Date().getFullYear();
+  const yrs=new Set((db.years||[]).concat([cy-1,cy,cy+1]));
+  (db.events||[]).forEach(x=>{ const y=Number(evStart(x).slice(0,4))||x.year; if(y) yrs.add(Number(y)); });
+  return [...yrs].filter(Boolean).sort((a,b)=>a-b).map(y=>`<option value="${y}" ${Number(ui.boardYear)===y?"selected":""}>${y}</option>`).join("");
+}
+
+// การ์ดอีเวนต์ (โฟกัส 3 เดือน) — รายละเอียด + แผน Activity + ตารางราคา/Yield รายตึก
+function eventCardHtml(x){
+  const cat=EVENT_CATS[x.category]||x.category||"อีเวนต์";
+  const catCol=CAT_COLOR[x.category]||"#64748b";
+  const imp=x.impact||"medium";
+  const canInfo=canEditEventInfo();
+  const salesNm=salesById(x.salesId)?.name || (x.salesId||"");
+  const actPlan = x.activityPlan ? escHtml(x.activityPlan) : `<span class="text-slate-400">— ฝ่ายขายยังไม่ระบุแผน —</span>`;
+  // ตารางราคา/Yield รายตึก (แสดงเฉพาะโรงแรมที่เกี่ยวข้องกับอีเวนต์นี้)
+  const grid = eventHotels(x).map(h=>{
+    const ye=yieldEntry(x,h.id);
+    const editable=canEditPricing(h.id);
+    const has=ye && ye.text;
+    const meta = has && ye.at ? `<div class="text-[10px] text-slate-400 mt-1">อัปเดต ${ye.at}${ye.by?(" · "+ye.by):""}</div>` : "";
+    return `<div class="rounded-xl border p-2.5" style="border-color:${has?'#99f6e4':'#e6ebf0'};background:${has?'#f0fdfa':'#fff'};">
+      <div class="flex items-center justify-between gap-2">
+        <div class="text-xs font-bold" style="color:${h.accent||'#0e7490'}">${h.name}</div>
+        ${editable?`<button onclick="openYieldBox('${x.id}','${h.id}')" class="text-[11px] font-semibold px-2 py-0.5 rounded-md" style="background:${has?'#0f766e':'#0e7490'};color:#fff;">${has?'แก้ไข':'＋ ใส่แผนราคา'}</button>`:""}
+      </div>
+      <div class="text-xs text-slate-700 mt-1.5 whitespace-pre-line leading-snug">${has?escHtml(ye.text):`<span class="text-slate-400">${editable?'ยังไม่ได้วางแผนราคา — กด “＋ ใส่แผนราคา”':'ผจก.ตึกนี้ยังไม่วางแผนราคา'}</span>`}</div>
+      ${meta}
+    </div>`;
+  }).join("");
+  return `<div class="card p-4 mb-3">
+    <div class="flex flex-wrap items-start justify-between gap-2">
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="badge" style="background:${catCol}1a;color:${catCol};">${cat}</span>
+        <span class="badge" style="${IMPACT_BADGE[imp]||IMPACT_BADGE.medium}">${IMPACT_LABEL[imp]||"ผลกระทบกลาง"}</span>
+        <span class="text-xs text-slate-500">🗓️ ${evDateLabel(x)} · ${evDays(x)} วัน</span>
+      </div>
+      ${canInfo?`<div class="flex gap-2 no-print"><button onclick="openEventInfo('${x.id}')" class="text-cyan-700 text-xs font-semibold">แก้ไขข้อมูล</button></div>`:""}
+    </div>
+    <div class="text-lg font-bold text-slate-800 mt-1.5">${escHtml(x.name)}</div>
+    <div class="text-sm text-slate-500 mt-0.5">📍 ${escHtml(eventLocLabel(x))}${x.scale?` &nbsp;·&nbsp; 👥 ${escHtml(x.scale)}`:""}</div>
+    <div class="text-xs text-slate-500 mt-1">🏨 โรงแรมที่เกี่ยวข้อง: ${eventHasExplicitHotels(x)?eventHotels(x).map(h=>escHtml(h.name)).join(", "):`<span class="text-slate-400">ทุกโรงแรม</span>`}</div>
+    ${x.note?`<div class="text-xs text-slate-400 mt-1">📝 ${escHtml(x.note)}</div>`:""}
+    <div class="mt-3 rounded-xl p-3" style="background:#f8fafc;border:1px solid #eef2f6;">
+      <div class="flex items-center justify-between">
+        <div class="text-xs font-bold text-slate-600">🎯 แผน Activity (ฝ่ายขาย)${salesNm?` · ${escHtml(salesNm)}`:""}</div>
+      </div>
+      <div class="text-sm text-slate-700 mt-1 whitespace-pre-line leading-snug">${actPlan}</div>
+    </div>
+    <div class="mt-3">
+      <div class="text-xs font-bold text-slate-600 mb-1.5">💰 แผนการทำราคา / Yield รายตึก <span class="font-normal text-slate-400">(ผู้จัดการแต่ละตึกกรอก)</span></div>
+      <div class="grid gap-2" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">${grid}</div>
+    </div>
+  </div>`;
+}
+
+// แถวอีเวนต์แบบย่อ (มุมมองทั้งปี) จัดกลุ่มตามเดือน
+function eventRowHtml(x){
+  const cat=EVENT_CATS[x.category]||x.category||"อีเวนต์";
+  const catCol=CAT_COLOR[x.category]||"#64748b";
+  const imp=x.impact||"medium";
+  const relHotels=eventHotels(x);
+  const planned=relHotels.filter(h=>yieldEntry(x,h.id)&&yieldEntry(x,h.id).text).length;
+  const canInfo=canEditEventInfo();
+  return `<tr class="border-b last:border-0 align-top">
+    <td class="py-2 whitespace-nowrap"><span style="display:inline-block;width:8px;height:8px;border-radius:9999px;background:${IMPACT_DOT[imp]||'#d97706'};margin-right:6px;"></span>${evDateLabel(x)}</td>
+    <td class="py-2 font-medium">${escHtml(x.name)}<div class="text-xs text-slate-400">${cat}</div></td>
+    <td class="py-2 text-slate-600">${escHtml([x.district,x.province].filter(Boolean).join(", ")||"-")}${x.venue?`<div class="text-xs text-slate-400">${escHtml(x.venue)}</div>`:""}</td>
+    <td class="py-2 text-slate-600">${x.scale?escHtml(x.scale):"-"}</td>
+    <td class="py-2 text-center"><span class="badge" style="background:${planned?'#d1fae5':'#f1f5f9'};color:${planned?'#047857':'#64748b'};">${planned}/${relHotels.length} ตึก</span></td>
+    <td class="py-2 text-right whitespace-nowrap no-print">
+      <button onclick="scrollFocusOrEdit('${x.id}')" class="text-cyan-700 text-xs font-semibold mr-2">เปิด</button>
+      ${canInfo?`<button onclick="openEventInfo('${x.id}')" class="text-slate-500 text-xs">แก้ไข</button>`:""}
+    </td>
+  </tr>`;
+}
+function scrollFocusOrEdit(id){ // เปิดกล่องรายละเอียด/แก้ไขราคาแบบเร็ว
+  openEventDetail(id);
+}
+
+function renderEventBoard(){
+  ensureBoardDefaults();
+  const y=ui.boardYear;
+  const focusKeys=[currentMonthKey(), addMonthsKey(currentMonthKey(),1), addMonthsKey(currentMonthKey(),2)];
+  const all=boardEventsFiltered();
+  // โฟกัส 3 เดือน (ไม่ผูกปี — ตามวันจริง) · กันซ้ำ: แสดงในเดือนแรกที่อีเวนต์แตะ
+  const shown=new Set();
+  const focusBlocks=focusKeys.map(k=>{
+    const list=all.filter(x=>evInMonth(x,k) && !shown.has(x.id))
+                  .sort((a,b)=>String(evStart(a)).localeCompare(String(evStart(b))));
+    list.forEach(x=>shown.add(x.id));
+    const inner = list.length
+      ? list.map(eventCardHtml).join("")
+      : `<div class="text-sm text-slate-400 px-1 py-3">— ยังไม่มีอีเวนต์ในเดือนนี้ —</div>`;
+    return `<div class="mb-2">
+      <div class="flex items-center gap-2 mb-2">
+        <div class="text-base font-bold text-slate-700">${monthLabel(k)}</div>
+        <div class="text-xs text-slate-400">${list.length} อีเวนต์</div>
+      </div>${inner}</div>`;
+  }).join("");
+
+  // ทั้งปี: จัดกลุ่มตามเดือน
+  const yearEvents=all.filter(x=>evInYear(x,y)).sort((a,b)=>String(evStart(a)).localeCompare(String(evStart(b))));
+  const byMonth={};
+  yearEvents.forEach(x=>{ const mk=ymKey(evStart(x))||(y+"-00"); (byMonth[mk]=byMonth[mk]||[]).push(x); });
+  const monthKeysSorted=Object.keys(byMonth).sort();
+  const yearBlocks = monthKeysSorted.length ? monthKeysSorted.map(mk=>{
+    const label = mk.endsWith("-00") ? "ยังไม่ระบุวันที่" : monthLabel(mk);
+    return `<div class="mb-1">
+      <div class="text-sm font-bold text-slate-600 mt-3 mb-1" style="border-left:3px solid #0e7490;padding-left:8px;">${label} <span class="font-normal text-slate-400">(${byMonth[mk].length})</span></div>
+      <div class="overflow-x-auto"><table class="w-full text-sm">
+        <thead><tr class="text-left text-slate-500 border-b">
+          <th class="py-1">วันที่</th><th>งาน/อีเวนต์</th><th>สถานที่ (เขต/จังหวัด)</th><th>ขนาด</th><th class="text-center">แผนราคา</th><th class="text-right no-print"></th>
+        </tr></thead>
+        <tbody>${byMonth[mk].map(eventRowHtml).join("")}</tbody>
+      </table></div></div>`;
+  }).join("") : `<div class="text-sm text-slate-400 py-4">— ยังไม่มีอีเวนต์ในปี ${y} —</div>`;
+
+  const totalYear=yearEvents.length;
+  const highCount=yearEvents.filter(x=>(x.impact||"medium")==="high").length;
+  const plannedCount=yearEvents.filter(x=>HOTELS.some(h=>yieldEntry(x,h.id)&&yieldEntry(x,h.id).text)).length;
+
+  return `
+  <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+    <div>
+      <div class="text-2xl font-bold text-slate-800">📅 ปฏิทินอีเวนต์ทั้งปี <span class="text-base font-normal text-slate-400">· วางแผนราคา/Yield ร่วมกัน</span></div>
+      <div class="text-sm text-slate-500">ฝ่ายขายแจ้งอีเวนต์ในโซน (ทุกตึกเห็นเหมือนกัน) → ผู้จัดการแต่ละตึกใส่แผนการทำราคาของตึกตัวเอง</div>
+    </div>
+    <button onclick="closeEventBoard()" class="btn btn-ghost text-sm px-3 py-1.5">← กลับหน้าหลัก</button>
+  </div>
+
+  ${(CLOUD && isHM()) ? `<div class="card p-3 mb-4" style="background:#fffbeb;border-color:#fde68a;">
+      <div class="text-sm text-amber-800">🏨 คุณเข้าสู่ระบบเป็น <b>ผู้จัดการโรงแรม</b> — ใส่/แก้ “แผนการทำราคา (Yield)” ได้เฉพาะตึกของคุณในการ์ดแต่ละอีเวนต์ ส่วนข้อมูลอีเวนต์ให้ฝ่ายขายเป็นผู้กรอก</div>
+    </div>` : ""}
+  ${(CLOUD && isSales()) ? `<div class="card p-3 mb-4" style="background:#ecfeff;border-color:#a5f3fc;">
+      <div class="text-sm text-cyan-800">🧑‍💼 คุณคือ <b>ฝ่ายขาย</b> — กด “＋ เพิ่มอีเวนต์” เพื่อแจ้งงานในโซนและใส่แผน Activity · ราคา/Yield ผู้จัดการแต่ละตึกจะเป็นผู้กรอก</div>
+    </div>` : ""}
+
+  <div class="card p-4 mb-5">
+    <div class="flex flex-wrap items-center gap-3">
+      <label class="text-sm text-slate-600">ปี (มุมมองทั้งปี)
+        <select onchange="setBoardYear(this.value)" class="pill-select ml-1 bg-slate-100 rounded-lg px-3 py-1.5 text-sm font-semibold">${boardYearOptions()}</select></label>
+      <label class="text-sm text-slate-600">จังหวัด
+        <select onchange="setBoardProvince(this.value)" class="pill-select ml-1 bg-slate-100 rounded-lg px-3 py-1.5 text-sm">${boardProvinceOptions()}</select></label>
+      <label class="text-sm text-slate-600">โรงแรมที่เกี่ยวข้อง
+        <select onchange="setBoardHotel(this.value)" class="pill-select ml-1 bg-slate-100 rounded-lg px-3 py-1.5 text-sm">
+          <option value="all" ${ui.boardHotel==="all"?"selected":""}>ทุกตึก</option>
+          ${HOTELS.map(h=>`<option value="${h.id}" ${ui.boardHotel===h.id?"selected":""}>${h.name}</option>`).join("")}
+        </select></label>
+      <div class="flex-1"></div>
+      ${canEditEventInfo()?`<button onclick="openEventInfo()" class="btn btn-primary text-sm px-4 py-1.5">＋ เพิ่มอีเวนต์</button>`:""}
+      <button onclick="exportEventBoardExcel()" class="btn btn-ghost text-sm px-3 py-1.5">⬇︎ Excel</button>
+    </div>
+    <div class="flex flex-wrap gap-4 mt-3 pt-3 border-t text-sm">
+      <div><span class="text-slate-400">อีเวนต์ปี ${y}:</span> <b class="text-slate-700">${totalYear}</b> งาน</div>
+      <div><span class="text-slate-400">ผลกระทบสูง:</span> <b class="text-rose-600">${highCount}</b> งาน</div>
+      <div><span class="text-slate-400">วางแผนราคาแล้ว:</span> <b class="text-teal-700">${plannedCount}</b> งาน</div>
+    </div>
+  </div>
+
+  <div class="mb-6">
+    <div class="flex items-center gap-2 mb-3">
+      <div class="section-title text-lg">🔎 โฟกัส 3 เดือน</div>
+      <div class="text-sm text-slate-400">${monthLabel(focusKeys[0])} – ${monthLabel(focusKeys[2])} · ช่วงที่ต้องรีบวางแผนราคา</div>
+    </div>
+    ${focusBlocks}
+  </div>
+
+  <div class="card p-4">
+    <div class="section-title text-lg mb-1">🗂️ อีเวนต์ทั้งปี ${y}</div>
+    <div class="text-sm text-slate-400 mb-2">กด “เปิด” เพื่อดูรายละเอียด/ใส่แผนราคาของแต่ละตึก</div>
+    ${yearBlocks}
+  </div>
+  `;
+}
+
+// ---- กล่องรายละเอียดอีเวนต์ (เปิดจากมุมมองทั้งปี) — ดูข้อมูล + ตารางราคาทุกตึก ----
+function openEventDetail(id){
+  const x=db.events.find(e=>e.id===id); if(!x) return;
+  const grid=eventHotels(x).map(h=>{
+    const ye=yieldEntry(x,h.id); const has=ye&&ye.text; const editable=canEditPricing(h.id);
+    return `<div class="rounded-xl border p-2.5" style="border-color:${has?'#99f6e4':'#e6ebf0'};background:${has?'#f0fdfa':'#fff'};">
+      <div class="flex items-center justify-between gap-2">
+        <div class="text-xs font-bold" style="color:${h.accent||'#0e7490'}">${h.name}</div>
+        ${editable?`<button onclick="openYieldBox('${x.id}','${h.id}')" class="text-[11px] font-semibold px-2 py-0.5 rounded-md" style="background:${has?'#0f766e':'#0e7490'};color:#fff;">${has?'แก้ไข':'＋ ใส่แผนราคา'}</button>`:""}
+      </div>
+      <div class="text-xs text-slate-700 mt-1.5 whitespace-pre-line leading-snug">${has?escHtml(ye.text):`<span class="text-slate-400">ยังไม่มีแผนราคา</span>`}</div>
+    </div>`;
+  }).join("");
+  const canInfo=canEditEventInfo();
+  const body=`
+    <div class="flex items-center gap-2 flex-wrap mb-1">
+      <span class="badge" style="background:${(CAT_COLOR[x.category]||'#64748b')}1a;color:${CAT_COLOR[x.category]||'#64748b'};">${EVENT_CATS[x.category]||"อีเวนต์"}</span>
+      <span class="badge" style="${IMPACT_BADGE[x.impact]||IMPACT_BADGE.medium}">${IMPACT_LABEL[x.impact]||"ผลกระทบกลาง"}</span>
+    </div>
+    <div class="text-lg font-bold text-slate-800">${escHtml(x.name)}</div>
+    <div class="text-sm text-slate-500">🗓️ ${evDateLabel(x)} · ${evDays(x)} วัน</div>
+    <div class="text-sm text-slate-500">📍 ${escHtml(eventLocLabel(x))}${x.scale?` · 👥 ${escHtml(x.scale)}`:""}</div>
+    <div class="text-xs text-slate-500 mt-1">🏨 โรงแรมที่เกี่ยวข้อง: ${eventHasExplicitHotels(x)?eventHotels(x).map(h=>escHtml(h.name)).join(", "):`<span class="text-slate-400">ทุกโรงแรม</span>`}</div>
+    ${x.note?`<div class="text-xs text-slate-400 mt-1">📝 ${escHtml(x.note)}</div>`:""}
+    <div class="mt-3 rounded-xl p-3" style="background:#f8fafc;border:1px solid #eef2f6;">
+      <div class="text-xs font-bold text-slate-600">🎯 แผน Activity (ฝ่ายขาย)</div>
+      <div class="text-sm text-slate-700 mt-1 whitespace-pre-line">${x.activityPlan?escHtml(x.activityPlan):`<span class="text-slate-400">— ยังไม่ระบุ —</span>`}</div>
+    </div>
+    <div class="mt-3">
+      <div class="text-xs font-bold text-slate-600 mb-1.5">💰 แผนการทำราคา / Yield รายตึก</div>
+      <div class="grid gap-2" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">${grid}</div>
+    </div>`;
+  const footer=canInfo?`<button type="button" onclick="closeYieldBox();openEventInfo('${x.id}')" class="text-cyan-700 text-xs font-semibold">✎ แก้ไขข้อมูลอีเวนต์</button>`:"";
+  document.getElementById("modalRoot").innerHTML=`
+    <div class="fixed inset-0 modal-backdrop flex items-center justify-center z-50" onclick="if(event.target===this) closeYieldBox()">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+        <div class="px-5 py-4 border-b flex justify-between items-center">
+          <div class="font-semibold text-lg text-slate-800">รายละเอียดอีเวนต์</div>
+          <button onclick="closeYieldBox()" class="text-slate-400 hover:text-slate-700">✕</button>
+        </div>
+        <div class="px-5 py-4">${body}
+          <div class="pt-4 flex justify-between items-center">
+            <div>${footer}</div>
+            <button type="button" onclick="closeYieldBox()" class="px-4 py-2 text-sm rounded-lg border">ปิด</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+// ---- Event info modal (ฝ่ายขาย/เจ้าของ) : เพิ่ม/แก้ข้อมูลอีเวนต์ + แผน Activity ----
+function openEventInfo(id){
+  if(!canEditEventInfo()){ alert("เฉพาะฝ่ายขายหรือเจ้าของกิจการเท่านั้นที่เพิ่ม/แก้ข้อมูลอีเวนต์ได้"); return; }
+  const ex=id?db.events.find(x=>x.id===id):null;
+  const catOpts=Object.entries(EVENT_CATS).map(([k,v])=>`<option value="${k}" ${ex&&ex.category===k?"selected":""}>${v}</option>`).join("");
+  const impOpts=Object.entries(IMPACT_LABEL).map(([k,v])=>`<option value="${k}" ${((ex&&ex.impact)||"medium")===k?"selected":""}>${v}</option>`).join("");
+  // โรงแรมที่เกี่ยวข้อง (ติ๊กเลือกได้) — อีเวนต์ใหม่/อีเวนต์เดิม = ติ๊กครบทุกโรงแรมไว้ก่อน
+  const relSet=new Set(ex?eventHotelIds(ex):HOTELS.map(h=>h.id));
+  const hotelChecks=HOTELS.map(h=>`<label class="inline-flex items-center gap-1.5 mr-4 mb-1.5 text-sm cursor-pointer"><input type="checkbox" id="f_h_${h.id}" ${relSet.has(h.id)?"checked":""} style="width:16px;height:16px;accent-color:#0e7490;"/> <span>${escHtml(h.name)}</span></label>`).join("");
+  const body=`
+    <label class="block text-sm">ชื่องาน/อีเวนต์<input id="f_name" value="${escAttr(ex?ex.name:"")}" class="${inputCls}" placeholder="เช่น คอนเสิร์ต … / มหกรรม …"/></label>
+    <div class="grid grid-cols-2 gap-2">
+      <label class="block text-sm">ประเภทงาน<select id="f_cat" class="${inputCls}">${catOpts}</select></label>
+      <label class="block text-sm">ผลกระทบต่อความต้องการห้องพัก<select id="f_impact" class="${inputCls}">${impOpts}</select></label>
+    </div>
+    <div class="grid grid-cols-2 gap-2">
+      <label class="block text-sm">จังหวัด<input id="f_prov" value="${escAttr(ex?ex.province:"")}" class="${inputCls}" list="provList" placeholder="เช่น ชลบุรี"/></label>
+      <label class="block text-sm">เขต/อำเภอ<input id="f_dist" value="${escAttr(ex?ex.district:"")}" class="${inputCls}" list="distList" placeholder="เช่น ศรีราชา"/></label>
+    </div>
+    <datalist id="provList">${PROVINCE_SUGGEST.map(p=>`<option value="${p}">`).join("")}</datalist>
+    <datalist id="distList">${DISTRICT_SUGGEST.map(d=>`<option value="${d}">`).join("")}</datalist>
+    <label class="block text-sm">สถานที่จัด (สถานที่/ฮอลล์)<input id="f_venue" value="${escAttr(ex?ex.venue:"")}" class="${inputCls}" placeholder="เช่น สนามกีฬา … / ศูนย์ประชุม …"/></label>
+    <div class="text-sm">
+      <div class="flex items-center justify-between mb-1">
+        <span>🏨 โรงแรมที่เกี่ยวข้อง <span class="text-xs text-slate-400">(ติ๊กเฉพาะตึกที่ได้ประโยชน์/ต้องทำราคา)</span></span>
+        <span class="text-xs no-print"><button type="button" onclick="eventHotelsToggleAll(true)" class="text-cyan-700 mr-2">เลือกทั้งหมด</button><button type="button" onclick="eventHotelsToggleAll(false)" class="text-slate-500">ล้าง</button></span>
+      </div>
+      <div class="rounded-lg border p-2.5 flex flex-wrap" style="border-color:#e6ebf0;background:#f8fafc;">${hotelChecks}</div>
+    </div>
+    <div class="grid grid-cols-2 gap-2">
+      <label class="block text-sm">วันที่เริ่ม<input type="date" id="f_start" value="${ex?ex.startDate||"":""}" class="${inputCls}"/></label>
+      <label class="block text-sm">วันที่สิ้นสุด<input type="date" id="f_end" value="${ex?(ex.endDate||ex.startDate||""):""}" class="${inputCls}"/></label>
+    </div>
+    <label class="block text-sm">ขนาดงาน / ผู้เข้าร่วมโดยประมาณ<input id="f_scale" value="${escAttr(ex?ex.scale:"")}" class="${inputCls}" placeholder="เช่น 5,000 คน / 20 บูธ"/></label>
+    <label class="block text-sm">ผู้แจ้ง (ฝ่ายขาย)${salesSelectHtml(ex?ex.salesId:(mySalesId()||ui.currentSales))}</label>
+    <label class="block text-sm">🎯 แผน Activity (ฝ่ายขาย)<textarea id="f_act" class="${inputCls}" rows="3" placeholder="เช่น ออกบูธหน้างาน · โปรโมชั่นแพ็กเกจห้องพัก · ประสานงานผู้จัด …">${ex?escAttr(ex.activityPlan):""}</textarea></label>
+    <label class="block text-sm">หมายเหตุ<input id="f_note" value="${escAttr(ex?ex.note:"")}" class="${inputCls}"/></label>
+    <input type="hidden" id="f_id" value="${ex?ex.id:''}"/>`;
+  const footer=ex?`<button type="button" onclick="deleteEventItem('${ex.id}')" class="text-rose-500 text-xs">ลบอีเวนต์นี้</button>`:"";
+  document.getElementById("modalRoot").innerHTML=modalShell(ex?"แก้ไขอีเวนต์":"เพิ่มอีเวนต์ (ฝ่ายขาย)",body,"submitEventInfo",footer);
+}
+function eventHotelsToggleAll(on){ HOTELS.forEach(h=>{ const el=document.getElementById("f_h_"+h.id); if(el) el.checked=!!on; }); }
+function submitEventInfo(){
+  if(!canEditEventInfo()){ alert("ไม่มีสิทธิ์แก้ไขข้อมูลอีเวนต์"); return; }
+  const id=val("f_id");
+  const start=val("f_start"); let end=val("f_end");
+  if(start && (!end || end<start)) end=start;
+  const hotelIds=HOTELS.filter(h=>document.getElementById("f_h_"+h.id)&&document.getElementById("f_h_"+h.id).checked).map(h=>h.id);
+  const data={
+    name:val("f_name").trim(), category:val("f_cat"), impact:val("f_impact"),
+    province:val("f_prov").trim(), district:val("f_dist").trim(), venue:val("f_venue").trim(),
+    hotelIds:hotelIds,
+    startDate:start, endDate:end, location:val("f_venue").trim(),
+    days:(start&&end)?(Math.round((new Date(end)-new Date(start))/86400000)+1):1,
+    scale:val("f_scale").trim(), salesId:val("f_sales"), activityPlan:val("f_act"),
+    note:val("f_note").trim(), year:start?Number(start.slice(0,4)):new Date().getFullYear()
+  };
+  if(!data.name){ alert("กรุณากรอกชื่องาน/อีเวนต์"); return; }
+  if(id){ Object.assign(db.events.find(x=>x.id===id),data); }
+  else { db.events.push({ id:uid("ev"), hotelId:"", pricingPlans:{}, ...data }); }
+  saveData(); closeModal(); render();
+}
+function deleteEventItem(id){
+  if(!canEditEventInfo()){ alert("ไม่มีสิทธิ์ลบอีเวนต์"); return; }
+  if(!confirm("ลบอีเวนต์นี้? (แผนราคาของทุกตึกจะถูกลบด้วย)")) return;
+  db.events=db.events.filter(x=>x.id!==id);
+  saveData(); closeModal(); render();
+}
+
+// ---- Yield editor (ผู้จัดการโรงแรม/เจ้าของ) : แผนการทำราคาของ "ตึกเดียว" ----
+// ใช้ modal เฉพาะที่ไม่โดนซ่อนในโหมด readonly (ปุ่มปิดไม่มีคำว่า Modal)
+function openYieldBox(eventId,hid){
+  if(!canEditPricing(hid)){ alert("เฉพาะผู้จัดการโรงแรมของตึกนี้ (หรือเจ้าของกิจการ) เท่านั้นที่กรอกแผนการทำราคาได้"); return; }
+  const ev=db.events.find(x=>x.id===eventId); if(!ev) return;
+  const h=hotelById(hid); const ye=yieldEntry(ev,hid); const cur=ye?ye.text:"";
+  document.getElementById("modalRoot").innerHTML=`
+    <div class="fixed inset-0 modal-backdrop flex items-center justify-center z-50" onclick="if(event.target===this) closeYieldBox()">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4">
+        <div class="px-5 py-4 border-b flex justify-between items-center">
+          <div class="font-semibold text-slate-800">💰 แผนการทำราคา · <span style="color:${h?h.accent:'#0e7490'}">${h?h.name:""}</span></div>
+          <button onclick="closeYieldBox()" class="text-slate-400 hover:text-slate-700">✕</button>
+        </div>
+        <div class="px-5 py-4 space-y-3">
+          <div class="text-xs text-slate-500">อีเวนต์: <span class="font-medium text-slate-700">${escHtml(ev.name)}</span> · ${evDateLabel(ev)}</div>
+          <textarea id="yield_txt" rows="5" class="${inputCls}" placeholder="เช่น ปรับ Superior +15% วันที่ 12–14, ปิดขาย OTA ราคาต่ำ, ตั้ง Min Stay 2 คืน, กันห้องขายหน้างาน 10 ห้อง">${escAttr(cur)}</textarea>
+          <div class="text-[11px] text-slate-400">บันทึกแล้วฝ่ายขายและผู้จัดการตึกอื่นจะเห็นทันที (ใช้สื่อสารร่วมกัน)</div>
+          <div class="flex justify-between items-center gap-2 pt-1">
+            <div>${cur?`<button type="button" onclick="clearYield('${eventId}','${hid}')" class="text-rose-500 text-xs">ล้างแผนของตึกนี้</button>`:""}</div>
+            <div class="flex gap-2">
+              <button type="button" onclick="closeYieldBox()" class="px-4 py-2 text-sm rounded-lg border">ยกเลิก</button>
+              <button type="button" onclick="saveYield('${eventId}','${hid}')" class="btn btn-primary px-4 py-2 text-sm">บันทึก</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+function closeYieldBox(){ const r=document.getElementById("modalRoot"); if(r) r.innerHTML=""; flushPendingRender(); }
+function saveYield(eventId,hid){
+  if(!canEditPricing(hid)){ alert("ไม่มีสิทธิ์แก้แผนราคาของตึกนี้"); return; }
+  const ev=db.events.find(x=>x.id===eventId); if(!ev) return;
+  if(!ev.pricingPlans||typeof ev.pricingPlans!=="object") ev.pricingPlans={};
+  const t=(val("yield_txt")||"").trim();
+  if(t) ev.pricingPlans[hid]={ text:t, by:(currentEmail()||"เครื่องนี้"), at:realToday() };
+  else delete ev.pricingPlans[hid];
+  saveData(); closeYieldBox(); render();
+}
+function clearYield(eventId,hid){
+  if(!canEditPricing(hid)) return;
+  const ev=db.events.find(x=>x.id===eventId); if(!ev) return;
+  if(ev.pricingPlans) delete ev.pricingPlans[hid];
+  saveData(); closeYieldBox(); render();
+}
+
+// ---- Export ปฏิทินอีเวนต์เป็น Excel ----
+function exportEventBoardExcel(){
+  if(typeof XLSX==="undefined"){ alert("ไลบรารี Excel ยังโหลดไม่เสร็จ ลองใหม่อีกครั้ง"); return; }
+  const y=ui.boardYear;
+  const evs=boardEventsFiltered().filter(x=>evInYear(x,y)).sort((a,b)=>String(evStart(a)).localeCompare(String(evStart(b))));
+  const head=["ชื่องาน","ประเภท","จังหวัด","เขต/อำเภอ","สถานที่","วันเริ่ม","วันสิ้นสุด","จำนวนวัน","ขนาด/ผู้เข้าร่วม","ผลกระทบ","ผู้แจ้ง(เซลล์)","แผน Activity (ฝ่ายขาย)"].concat(HOTELS.map(h=>"ราคา/Yield: "+h.name));
+  const rows=evs.map(x=>[x.name,EVENT_CATS[x.category]||x.category||"",x.province||"",x.district||"",x.venue||x.location||"",
+    "'"+evStart(x),"'"+evEnd(x),evDays(x),x.scale||"",IMPACT_LABEL[x.impact]||"",salesById(x.salesId)?.name||x.salesId||"",
+    x.activityPlan||""].concat(HOTELS.map(h=>{ const ye=yieldEntry(x,h.id); return ye?ye.text:""; })));
+  const wb=XLSX.utils.book_new();
+  const aoa=[["ปฏิทินอีเวนต์ทั้งปี — Plaai Group · ปี "+y],[],head].concat(rows);
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(aoa),"Events "+y);
+  XLSX.writeFile(wb,"plaai_events_"+y+".xlsx");
 }
 
 // ============================================================
