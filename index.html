@@ -529,11 +529,12 @@ function normalizeData(){
   //           · แผน Activity (ฝ่ายขายกรอก) · แผนการทำราคา/Yield รายตึก (ผจก.แต่ละตึกกรอก)
   db.events        = (db.events||[]).map(x=>({ year:null, hotelId:"", hotelIds:null, location:"", venue:"", province:"", district:"",
                         startDate:"", endDate:"", days:1, category:"", scale:"", impact:"", salesId:"",
-                        activityPlan:"", pricingPlans:{}, note:"", ...x }));
+                        activityPlan:"", pricingPlans:{}, acks:{}, note:"", ...x }));
   db.events.forEach(e=>{
     if(!e.venue && e.location) e.venue = e.location;             // ย้ายค่าสถานที่เดิม → venue
     if(!e.endDate) e.endDate = e.startDate ? addDaysStr(e.startDate,(Number(e.days)||1)-1) : "";
     if(!e.pricingPlans || typeof e.pricingPlans!=="object") e.pricingPlans = {};
+    if(!e.acks || typeof e.acks!=="object") e.acks = {};          // ผจก.แต่ละตึก "รับทราบ" อีเวนต์นี้แล้วหรือยัง
     if(!e.year && e.startDate) e.year = Number(e.startDate.slice(0,4))||null;
   });
   db.opportunities = (db.opportunities||[]).map(x=>({ value:0, stage:"lead", actionPlan:"", ...x }));
@@ -790,6 +791,7 @@ function render(){
   guardHotelScope();
   const mainView = ui.page==="salesReport" ? renderSalesReport()
                  : ui.page==="eventBoard" ? renderEventBoard()
+                 : ui.page==="yieldBoard" ? renderYieldBoard()
                  : ui.role==="present" ? renderPresentView()
                  : ui.role==="sales" ? renderSalesView()
                  : ui.role==="finance" ? renderFinanceView()
@@ -798,6 +800,7 @@ function render(){
   app.innerHTML = `
     ${renderTopBar()}
     <div class="max-w-7xl mx-auto px-4 py-6">
+      ${notifBannerHtml()}
       ${mainView}
     </div>
     <div id="modalRoot"></div>`;
@@ -806,8 +809,8 @@ function render(){
   if (ui.page==="salesReport"){
     /* report page draws its own charts */
     drawReportChart();
-  } else if (ui.page==="eventBoard"){
-    /* หน้าปฏิทินอีเวนต์ไม่มีกราฟ */
+  } else if (ui.page==="eventBoard" || ui.page==="yieldBoard"){
+    /* หน้าปฏิทินอีเวนต์ / แผนราคา ไม่มีกราฟ */
   } else if (ui.role==="present"){
     drawPresentCharts();
   } else if (ui.role==="gm"){
@@ -859,8 +862,11 @@ function renderTopBar(){
         </div>
         <button onclick="openSalesReport()" title="ดึงรายงานฝ่ายขายรายคน (เลือกช่วงวันที่ · Export Excel/CSV · ส่งอีเมล)"
                 class="btn text-xs px-3 py-1.5 font-semibold ${ui.page==='salesReport'?'bg-white text-cyan-800':'bg-white/20 hover:bg-white/30 text-white'}">📄 รายงานเซลล์</button>
-        <button onclick="openEventBoard()" title="ปฏิทินอีเวนต์ทั้งปี · สื่อสารระหว่างฝ่ายขายกับผู้จัดการโรงแรม เพื่อวางแผนราคา/Yield ในช่วงมีอีเวนต์"
+        <button onclick="openEventBoard()" title="ปฏิทินอีเวนต์ทั้งปี · ฝ่ายขายแจ้งงานในโซนให้ผู้จัดการแต่ละตึกทราบ"
                 class="btn text-xs px-3 py-1.5 font-semibold ${ui.page==='eventBoard'?'bg-white text-cyan-800':'bg-white/20 hover:bg-white/30 text-white'}">📅 ปฏิทินอีเวนต์</button>
+        <button onclick="openYieldBoard()" title="แผนการทำราคา/Yield รายตึก · ผู้จัดการแต่ละตึกกรอกเอง ฝ่ายขายดูอย่างเดียว"
+                class="btn text-xs px-3 py-1.5 font-semibold ${ui.page==='yieldBoard'?'bg-white text-cyan-800':'bg-white/20 hover:bg-white/30 text-white'}">💰 แผนราคา/Yield</button>
+        ${notifBellHtml()}
         ${CLOUD ? roleBadgeHtml() : ""}
         ${CLOUD ? `<span id="cloudStatus" class="text-xs" style="color:#a7f3d0;">●</span>` : `<span class="text-xs" style="color:#fde68a;" title="กำลังใช้งานแบบออฟไลน์ในเครื่องนี้">ออฟไลน์</span>`}
         <button onclick="showWeeklySummary()" title="สร้าง/ส่งสรุปยอดขายประจำสัปดาห์เข้า LINE" class="btn text-xs bg-white/20 hover:bg-white/30 text-white px-3 py-1.5">📤 สรุปสัปดาห์</button>
@@ -3260,7 +3266,70 @@ function evDateLabel(x){
   return fmt(s)+" – "+fmt(e)+" "+e.slice(0,4);
 }
 function yieldEntry(ev,hid){ const p=ev.pricingPlans && ev.pricingPlans[hid]; if(!p) return null;
-  if(typeof p==="string") return { text:p, by:"", at:"" }; return p; }
+  if(typeof p==="string") return { text:p, by:"", at:"", level:"" }; return p; }
+// ---- ระดับราคาช่วงอีเวนต์ (ให้ฝ่ายขายเห็นแบบย่อว่า "ราคาสูงเป็นพิเศษ") ----
+const PRICE_LEVELS = {
+  peak:   { label:"ราคาสูงเป็นพิเศษ", short:"สูงพิเศษ", badge:"background:#fee2e2;color:#b91c1c;", dot:"#dc2626", rank:3 },
+  up:     { label:"ราคาปรับขึ้น",     short:"ปรับขึ้น",  badge:"background:#ffedd5;color:#c2410c;", dot:"#ea580c", rank:2 },
+  normal: { label:"ราคาปกติ",         short:"ปกติ",     badge:"background:#e0f2fe;color:#0369a1;", dot:"#0284c7", rank:1 },
+};
+function yieldLevel(ev,hid){ const ye=yieldEntry(ev,hid); return (ye && ye.level) ? ye.level : ""; }
+// ระดับราคารวมของอีเวนต์ (เอาระดับสูงสุดในบรรดาตึกที่วางแผนไว้)
+function eventPriceLevel(ev){
+  let best=null, bestRank=0;
+  eventHotels(ev).forEach(h=>{ const lv=yieldLevel(ev,h.id); if(lv&&PRICE_LEVELS[lv]&&PRICE_LEVELS[lv].rank>bestRank){ best=lv; bestRank=PRICE_LEVELS[lv].rank; } });
+  return best;
+}
+function ackEntry(ev,hid){ const a=ev.acks && ev.acks[hid]; return a||null; }
+// จำนวนตึกที่ "รับทราบแล้ว" / "วางแผนราคาแล้ว" จากตึกที่เกี่ยวข้องทั้งหมด
+function eventAckStats(ev){ const hs=eventHotels(ev); return {
+  total:hs.length,
+  acked:hs.filter(h=>ackEntry(ev,h.id)).length,
+  planned:hs.filter(h=>{ const ye=yieldEntry(ev,h.id); return ye&&ye.text; }).length,
+}; }
+
+// ---- สถานะการแจ้งเตือน (คำนวณจากวันจริงอัตโนมัติทุกครั้งที่เรนเดอร์) ----
+// upcoming = ใกล้ถึงภายใน 30 วัน · ongoing = กำลังจัดอยู่ · past = ผ่านไปแล้ว (แจ้งเตือนหายเอง) · future = ยังไกลเกิน 30 วัน
+const NOTIF_WINDOW_DAYS = 30;
+function eventNotifState(x){
+  const s=evStart(x); if(!s) return "future";
+  const dStart=daysDiff(s), dEnd=daysDiff(evEnd(x));
+  if(dEnd<0) return "past";
+  if(dStart<=0 && dEnd>=0) return "ongoing";
+  if(dStart<=NOTIF_WINDOW_DAYS) return "upcoming";
+  return "future";
+}
+function eventNotifActive(x){ const st=eventNotifState(x); return st==="upcoming"||st==="ongoing"; }
+// ตึกที่ผู้ใช้คนนี้ "ดูแล/เกี่ยวข้อง" กับอีเวนต์นี้ (ผจก.=เฉพาะตึกตัวเอง · คนอื่น=ทุกตึกที่เกี่ยวข้อง)
+function eventScopeHotels(x){ const rel=new Set(eventHotelIds(x)); const allow=new Set(allowedHotelIds()); return HOTELS.filter(h=>rel.has(h.id)&&allow.has(h.id)); }
+// อีเวนต์ที่ต้องแจ้งเตือนสำหรับผู้ใช้คนนี้ (active + เกี่ยวข้องกับตึกที่ดูได้)
+function viewerNotifEvents(){
+  return (db.events||[]).filter(x=>eventNotifActive(x) && eventScopeHotels(x).length>0)
+    .sort((a,b)=>String(evStart(a)).localeCompare(String(evStart(b))));
+}
+// อีเวนต์ที่ "ยังต้องทำอะไรบางอย่าง" (ผจก. = ยังไม่รับทราบ หรือ ยังไม่วางแผนราคาตึกตัวเอง)
+function eventNeedsAttention(x){
+  if(!eventNotifActive(x)) return false;
+  return eventScopeHotels(x).some(h=>{
+    if(!canEditPricing(h.id)) return false;          // นับเฉพาะตึกที่ผู้ใช้มีสิทธิ์กรอก (ผจก./เจ้าของ)
+    const ye=yieldEntry(x,h.id);
+    return !ackEntry(x,h.id) || !(ye&&ye.text);       // ยังไม่รับทราบ หรือ ยังไม่มีแผนราคา
+  });
+}
+// จำนวนแจ้งเตือนที่ต้องสนใจ (กระดิ่งบนแถบบน)
+function notifBellCount(){
+  const evs=viewerNotifEvents();
+  if(canEditAnyPricing()) return evs.filter(eventNeedsAttention).length; // ผจก./เจ้าของ = งานที่ยังค้าง
+  return evs.length;                                                     // ฝ่ายขาย/อื่น ๆ = จำนวนอีเวนต์ที่กำลังจะถึง
+}
+function notifDayLabel(x){
+  const st=eventNotifState(x);
+  if(st==="ongoing") return "🔴 กำลังจัดอยู่";
+  const d=daysDiff(evStart(x));
+  if(d===0) return "วันนี้!";
+  if(d===1) return "พรุ่งนี้";
+  return "อีก "+d+" วัน";
+}
 function eventLocLabel(x){
   const parts=[]; if(x.venue) parts.push(x.venue);
   const geo=[x.district,x.province].filter(Boolean).join(", ");
@@ -3320,27 +3389,14 @@ function eventCardHtml(x){
   const canInfo=canEditEventInfo();
   const salesNm=salesById(x.salesId)?.name || (x.salesId||"");
   const actPlan = x.activityPlan ? escHtml(x.activityPlan) : `<span class="text-slate-400">— ฝ่ายขายยังไม่ระบุแผน —</span>`;
-  // ตารางราคา/Yield รายตึก (แสดงเฉพาะโรงแรมที่เกี่ยวข้องกับอีเวนต์นี้)
-  const grid = eventHotels(x).map(h=>{
-    const ye=yieldEntry(x,h.id);
-    const editable=canEditPricing(h.id);
-    const has=ye && ye.text;
-    const meta = has && ye.at ? `<div class="text-[10px] text-slate-400 mt-1">อัปเดต ${ye.at}${ye.by?(" · "+ye.by):""}</div>` : "";
-    return `<div class="rounded-xl border p-2.5" style="border-color:${has?'#99f6e4':'#e6ebf0'};background:${has?'#f0fdfa':'#fff'};">
-      <div class="flex items-center justify-between gap-2">
-        <div class="text-xs font-bold" style="color:${h.accent||'#0e7490'}">${h.name}</div>
-        ${editable?`<button onclick="openYieldBox('${x.id}','${h.id}')" class="text-[11px] font-semibold px-2 py-0.5 rounded-md" style="background:${has?'#0f766e':'#0e7490'};color:#fff;">${has?'แก้ไข':'＋ ใส่แผนราคา'}</button>`:""}
-      </div>
-      <div class="text-xs text-slate-700 mt-1.5 whitespace-pre-line leading-snug">${has?escHtml(ye.text):`<span class="text-slate-400">${editable?'ยังไม่ได้วางแผนราคา — กด “＋ ใส่แผนราคา”':'ผจก.ตึกนี้ยังไม่วางแผนราคา'}</span>`}</div>
-      ${meta}
-    </div>`;
-  }).join("");
+  const notif = eventNotifActive(x) ? `<span class="badge" style="background:#fef9c3;color:#a16207;">🔔 ${notifDayLabel(x)}</span>` : "";
   return `<div class="card p-4 mb-3">
     <div class="flex flex-wrap items-start justify-between gap-2">
       <div class="flex items-center gap-2 flex-wrap">
         <span class="badge" style="background:${catCol}1a;color:${catCol};">${cat}</span>
         <span class="badge" style="${IMPACT_BADGE[imp]||IMPACT_BADGE.medium}">${IMPACT_LABEL[imp]||"ผลกระทบกลาง"}</span>
         <span class="text-xs text-slate-500">🗓️ ${evDateLabel(x)} · ${evDays(x)} วัน</span>
+        ${notif}
       </div>
       ${canInfo?`<div class="flex gap-2 no-print"><button onclick="openEventInfo('${x.id}')" class="text-cyan-700 text-xs font-semibold">แก้ไขข้อมูล</button></div>`:""}
     </div>
@@ -3354,10 +3410,22 @@ function eventCardHtml(x){
       </div>
       <div class="text-sm text-slate-700 mt-1 whitespace-pre-line leading-snug">${actPlan}</div>
     </div>
-    <div class="mt-3">
-      <div class="text-xs font-bold text-slate-600 mb-1.5">💰 แผนการทำราคา / Yield รายตึก <span class="font-normal text-slate-400">(ผู้จัดการแต่ละตึกกรอก)</span></div>
-      <div class="grid gap-2" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">${grid}</div>
-    </div>
+    ${priceStatusHtml(x)}
+  </div>`;
+}
+// แถบสถานะราคา/Yield แบบย่อ (อ่านอย่างเดียว) + ลิงก์ไปหน้าจัดการราคา — ใช้ในหน้าปฏิทินอีเวนต์
+function priceStatusHtml(x){
+  const st=eventAckStats(x);
+  const lv=eventPriceLevel(x);
+  const lvBadge = lv
+    ? `<span class="badge" style="${PRICE_LEVELS[lv].badge}">💰 ${PRICE_LEVELS[lv].label}</span>`
+    : `<span class="badge" style="background:#f1f5f9;color:#64748b;">💰 ยังไม่ระบุระดับราคา</span>`;
+  return `<div class="mt-3 rounded-xl p-3 flex flex-wrap items-center gap-x-4 gap-y-1.5" style="background:#f0fdfa;border:1px solid #cdeee9;">
+    <div class="text-xs font-bold text-slate-600">สถานะราคา/Yield</div>
+    ${lvBadge}
+    <span class="text-xs text-slate-500">รับทราบ <b class="text-slate-700">${st.acked}/${st.total}</b> ตึก · วางแผนราคาแล้ว <b class="text-teal-700">${st.planned}/${st.total}</b> ตึก</span>
+    <div class="flex-1"></div>
+    <button onclick="openYieldBoard('${x.id}')" class="text-xs font-semibold px-2.5 py-1 rounded-md no-print" style="background:#0f766e;color:#fff;">แผนราคา/Yield →</button>
   </div>`;
 }
 
@@ -3368,13 +3436,17 @@ function eventRowHtml(x){
   const imp=x.impact||"medium";
   const relHotels=eventHotels(x);
   const planned=relHotels.filter(h=>yieldEntry(x,h.id)&&yieldEntry(x,h.id).text).length;
+  const lv=eventPriceLevel(x);
+  const priceCell = lv
+    ? `<span class="badge" style="${PRICE_LEVELS[lv].badge}">${PRICE_LEVELS[lv].short}</span><div class="text-[10px] text-slate-400 mt-0.5">${planned}/${relHotels.length} ตึก</div>`
+    : `<span class="badge" style="background:#f1f5f9;color:#64748b;">${planned}/${relHotels.length} ตึก</span>`;
   const canInfo=canEditEventInfo();
   return `<tr class="border-b last:border-0 align-top">
     <td class="py-2 whitespace-nowrap"><span style="display:inline-block;width:8px;height:8px;border-radius:9999px;background:${IMPACT_DOT[imp]||'#d97706'};margin-right:6px;"></span>${evDateLabel(x)}</td>
     <td class="py-2 font-medium">${escHtml(x.name)}<div class="text-xs text-slate-400">${cat}</div></td>
     <td class="py-2 text-slate-600">${escHtml([x.district,x.province].filter(Boolean).join(", ")||"-")}${x.venue?`<div class="text-xs text-slate-400">${escHtml(x.venue)}</div>`:""}</td>
     <td class="py-2 text-slate-600">${x.scale?escHtml(x.scale):"-"}</td>
-    <td class="py-2 text-center"><span class="badge" style="background:${planned?'#d1fae5':'#f1f5f9'};color:${planned?'#047857':'#64748b'};">${planned}/${relHotels.length} ตึก</span></td>
+    <td class="py-2 text-center">${priceCell}</td>
     <td class="py-2 text-right whitespace-nowrap no-print">
       <button onclick="scrollFocusOrEdit('${x.id}')" class="text-cyan-700 text-xs font-semibold mr-2">เปิด</button>
       ${canInfo?`<button onclick="openEventInfo('${x.id}')" class="text-slate-500 text-xs">แก้ไข</button>`:""}
@@ -3417,7 +3489,7 @@ function renderEventBoard(){
       <div class="text-sm font-bold text-slate-600 mt-3 mb-1" style="border-left:3px solid #0e7490;padding-left:8px;">${label} <span class="font-normal text-slate-400">(${byMonth[mk].length})</span></div>
       <div class="overflow-x-auto"><table class="w-full text-sm">
         <thead><tr class="text-left text-slate-500 border-b">
-          <th class="py-1">วันที่</th><th>งาน/อีเวนต์</th><th>สถานที่ (เขต/จังหวัด)</th><th>ขนาด</th><th class="text-center">แผนราคา</th><th class="text-right no-print"></th>
+          <th class="py-1">วันที่</th><th>งาน/อีเวนต์</th><th>สถานที่ (เขต/จังหวัด)</th><th>ขนาด</th><th class="text-center">ระดับราคา</th><th class="text-right no-print"></th>
         </tr></thead>
         <tbody>${byMonth[mk].map(eventRowHtml).join("")}</tbody>
       </table></div></div>`;
@@ -3430,17 +3502,20 @@ function renderEventBoard(){
   return `
   <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
     <div>
-      <div class="text-2xl font-bold text-slate-800">📅 ปฏิทินอีเวนต์ทั้งปี <span class="text-base font-normal text-slate-400">· วางแผนราคา/Yield ร่วมกัน</span></div>
-      <div class="text-sm text-slate-500">ฝ่ายขายแจ้งอีเวนต์ในโซน (ทุกตึกเห็นเหมือนกัน) → ผู้จัดการแต่ละตึกใส่แผนการทำราคาของตึกตัวเอง</div>
+      <div class="text-2xl font-bold text-slate-800">📅 ปฏิทินอีเวนต์ทั้งปี <span class="text-base font-normal text-slate-400">· ฝ่ายขายแจ้งงานในโซน</span></div>
+      <div class="text-sm text-slate-500">ฝ่ายขายแจ้งอีเวนต์ในโซน (ทุกตึกเห็นเหมือนกัน) → ระบบแจ้งเตือนผู้จัดการแต่ละตึกให้ไปวางแผนราคาที่ <b>หน้าแผนราคา/Yield</b></div>
     </div>
-    <button onclick="closeEventBoard()" class="btn btn-ghost text-sm px-3 py-1.5">← กลับหน้าหลัก</button>
+    <div class="flex gap-2">
+      <button onclick="openYieldBoard()" class="btn btn-primary text-sm px-3 py-1.5">💰 หน้าแผนราคา/Yield →</button>
+      <button onclick="closeEventBoard()" class="btn btn-ghost text-sm px-3 py-1.5">← กลับหน้าหลัก</button>
+    </div>
   </div>
 
   ${(CLOUD && isHM()) ? `<div class="card p-3 mb-4" style="background:#fffbeb;border-color:#fde68a;">
-      <div class="text-sm text-amber-800">🏨 คุณเข้าสู่ระบบเป็น <b>ผู้จัดการโรงแรม</b> — ใส่/แก้ “แผนการทำราคา (Yield)” ได้เฉพาะตึกของคุณในการ์ดแต่ละอีเวนต์ ส่วนข้อมูลอีเวนต์ให้ฝ่ายขายเป็นผู้กรอก</div>
+      <div class="text-sm text-amber-800">🏨 คุณเข้าสู่ระบบเป็น <b>ผู้จัดการโรงแรม</b> — หน้านี้ดูอย่างเดียว (ปฏิทินอีเวนต์ที่ฝ่ายขายแจ้ง) · การ <b>รับทราบ</b> และ <b>วางแผนราคา (Yield)</b> ของตึกคุณ ทำได้ที่ <button onclick="openYieldBoard()" class="underline font-semibold">หน้าแผนราคา/Yield</button></div>
     </div>` : ""}
   ${(CLOUD && isSales()) ? `<div class="card p-3 mb-4" style="background:#ecfeff;border-color:#a5f3fc;">
-      <div class="text-sm text-cyan-800">🧑‍💼 คุณคือ <b>ฝ่ายขาย</b> — กด “＋ เพิ่มอีเวนต์” เพื่อแจ้งงานในโซนและใส่แผน Activity · ราคา/Yield ผู้จัดการแต่ละตึกจะเป็นผู้กรอก</div>
+      <div class="text-sm text-cyan-800">🧑‍💼 คุณคือ <b>ฝ่ายขาย</b> — กด “＋ เพิ่มอีเวนต์” เพื่อแจ้งงานในโซนและใส่แผน Activity · ระบบจะแจ้งเตือนผู้จัดการแต่ละตึกให้ไปทำราคาเอง คุณดูสถานะราคาได้แบบอ่านอย่างเดียว</div>
     </div>` : ""}
 
   <div class="card p-4 mb-5">
@@ -3485,11 +3560,12 @@ function renderEventBoard(){
 function openEventDetail(id){
   const x=db.events.find(e=>e.id===id); if(!x) return;
   const grid=eventHotels(x).map(h=>{
-    const ye=yieldEntry(x,h.id); const has=ye&&ye.text; const editable=canEditPricing(h.id);
+    const ye=yieldEntry(x,h.id); const has=ye&&ye.text; const lv=yieldLevel(x,h.id);
+    const acked=ackEntry(x,h.id);
     return `<div class="rounded-xl border p-2.5" style="border-color:${has?'#99f6e4':'#e6ebf0'};background:${has?'#f0fdfa':'#fff'};">
       <div class="flex items-center justify-between gap-2">
         <div class="text-xs font-bold" style="color:${h.accent||'#0e7490'}">${h.name}</div>
-        ${editable?`<button onclick="openYieldBox('${x.id}','${h.id}')" class="text-[11px] font-semibold px-2 py-0.5 rounded-md" style="background:${has?'#0f766e':'#0e7490'};color:#fff;">${has?'แก้ไข':'＋ ใส่แผนราคา'}</button>`:""}
+        ${lv&&PRICE_LEVELS[lv]?`<span class="badge" style="${PRICE_LEVELS[lv].badge}">${PRICE_LEVELS[lv].short}</span>`:(acked?`<span class="badge" style="background:#e0f2fe;color:#0369a1;">รับทราบแล้ว</span>`:"")}
       </div>
       <div class="text-xs text-slate-700 mt-1.5 whitespace-pre-line leading-snug">${has?escHtml(ye.text):`<span class="text-slate-400">ยังไม่มีแผนราคา</span>`}</div>
     </div>`;
@@ -3510,7 +3586,10 @@ function openEventDetail(id){
       <div class="text-sm text-slate-700 mt-1 whitespace-pre-line">${x.activityPlan?escHtml(x.activityPlan):`<span class="text-slate-400">— ยังไม่ระบุ —</span>`}</div>
     </div>
     <div class="mt-3">
-      <div class="text-xs font-bold text-slate-600 mb-1.5">💰 แผนการทำราคา / Yield รายตึก</div>
+      <div class="flex items-center justify-between mb-1.5">
+        <div class="text-xs font-bold text-slate-600">💰 แผนการทำราคา / Yield รายตึก <span class="font-normal text-slate-400">(อ่านอย่างเดียว)</span></div>
+        <button onclick="closeYieldBox();openYieldBoard('${x.id}')" class="text-[11px] font-semibold px-2 py-0.5 rounded-md no-print" style="background:#0f766e;color:#fff;">ไปหน้าแผนราคา →</button>
+      </div>
       <div class="grid gap-2" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">${grid}</div>
     </div>`;
   const footer=canInfo?`<button type="button" onclick="closeYieldBox();openEventInfo('${x.id}')" class="text-cyan-700 text-xs font-semibold">✎ แก้ไขข้อมูลอีเวนต์</button>`:"";
@@ -3605,7 +3684,8 @@ function deleteEventItem(id){
 function openYieldBox(eventId,hid){
   if(!canEditPricing(hid)){ alert("เฉพาะผู้จัดการโรงแรมของตึกนี้ (หรือเจ้าของกิจการ) เท่านั้นที่กรอกแผนการทำราคาได้"); return; }
   const ev=db.events.find(x=>x.id===eventId); if(!ev) return;
-  const h=hotelById(hid); const ye=yieldEntry(ev,hid); const cur=ye?ye.text:"";
+  const h=hotelById(hid); const ye=yieldEntry(ev,hid); const cur=ye?ye.text:""; const curLv=(ye&&ye.level)||"";
+  const lvOpts=Object.entries(PRICE_LEVELS).map(([k,v])=>`<option value="${k}" ${curLv===k?"selected":""}>${v.label}</option>`).join("");
   document.getElementById("modalRoot").innerHTML=`
     <div class="fixed inset-0 modal-backdrop flex items-center justify-center z-50" onclick="if(event.target===this) closeYieldBox()">
       <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4">
@@ -3615,8 +3695,11 @@ function openYieldBox(eventId,hid){
         </div>
         <div class="px-5 py-4 space-y-3">
           <div class="text-xs text-slate-500">อีเวนต์: <span class="font-medium text-slate-700">${escHtml(ev.name)}</span> · ${evDateLabel(ev)}</div>
-          <textarea id="yield_txt" rows="5" class="${inputCls}" placeholder="เช่น ปรับ Superior +15% วันที่ 12–14, ปิดขาย OTA ราคาต่ำ, ตั้ง Min Stay 2 คืน, กันห้องขายหน้างาน 10 ห้อง">${escAttr(cur)}</textarea>
-          <div class="text-[11px] text-slate-400">บันทึกแล้วฝ่ายขายและผู้จัดการตึกอื่นจะเห็นทันที (ใช้สื่อสารร่วมกัน)</div>
+          <label class="block text-sm text-slate-600">ระดับราคาช่วงนี้ <span class="text-xs text-slate-400">(ฝ่ายขายจะเห็นป้ายนี้)</span>
+            <select id="yield_level" class="${inputCls}">${lvOpts}</select></label>
+          <label class="block text-sm text-slate-600">รายละเอียดแผนการทำราคา
+            <textarea id="yield_txt" rows="5" class="${inputCls}" placeholder="เช่น ปรับ Superior +15% วันที่ 12–14, ปิดขาย OTA ราคาต่ำ, ตั้ง Min Stay 2 คืน, กันห้องขายหน้างาน 10 ห้อง">${escAttr(cur)}</textarea></label>
+          <div class="text-[11px] text-slate-400">บันทึกแล้วฝ่ายขายและผู้จัดการตึกอื่นจะเห็นทันที และระบบจะถือว่าตึกนี้ “รับทราบ” อีเวนต์นี้แล้ว</div>
           <div class="flex justify-between items-center gap-2 pt-1">
             <div>${cur?`<button type="button" onclick="clearYield('${eventId}','${hid}')" class="text-rose-500 text-xs">ล้างแผนของตึกนี้</button>`:""}</div>
             <div class="flex gap-2">
@@ -3634,8 +3717,10 @@ function saveYield(eventId,hid){
   const ev=db.events.find(x=>x.id===eventId); if(!ev) return;
   if(!ev.pricingPlans||typeof ev.pricingPlans!=="object") ev.pricingPlans={};
   const t=(val("yield_txt")||"").trim();
-  if(t) ev.pricingPlans[hid]={ text:t, by:(currentEmail()||"เครื่องนี้"), at:realToday() };
+  const lv=val("yield_level")||"";
+  if(t) ev.pricingPlans[hid]={ text:t, level:lv, by:(currentEmail()||"เครื่องนี้"), at:realToday() };
   else delete ev.pricingPlans[hid];
+  markAck(ev,hid);                 // วางแผนราคา = รับทราบอีเวนต์นี้ด้วยโดยอัตโนมัติ
   saveData(); closeYieldBox(); render();
 }
 function clearYield(eventId,hid){
@@ -3643,6 +3728,167 @@ function clearYield(eventId,hid){
   const ev=db.events.find(x=>x.id===eventId); if(!ev) return;
   if(ev.pricingPlans) delete ev.pricingPlans[hid];
   saveData(); closeYieldBox(); render();
+}
+// ---- ผู้จัดการโรงแรม "รับทราบ" ว่ามีอีเวนต์นี้ ----
+function markAck(ev,hid){
+  if(!ev.acks||typeof ev.acks!=="object") ev.acks={};
+  if(!ev.acks[hid]) ev.acks[hid]={ by:(currentEmail()||"เครื่องนี้"), at:realToday() };
+}
+function ackEvent(eventId,hid){
+  if(!canEditPricing(hid)){ alert("เฉพาะผู้จัดการโรงแรมของตึกนี้ (หรือเจ้าของกิจการ) เท่านั้นที่กดรับทราบได้"); return; }
+  const ev=db.events.find(x=>x.id===eventId); if(!ev) return;
+  markAck(ev,hid); saveData(); render();
+}
+
+// ============================================================
+// หน้าแผนราคา / Yield (แยกจากปฏิทินอีเวนต์)
+//  • ผู้จัดการแต่ละตึก = รับทราบอีเวนต์ + กรอกแผนราคาของตึกตัวเอง
+//  • ฝ่ายขาย/ผู้บริหาร = ดูอย่างเดียว (เห็นว่าช่วงไหนราคาสูงเป็นพิเศษ)
+// ============================================================
+function openYieldBoard(focusId){ ensureBoardDefaults(); ui.page="yieldBoard"; ui.yieldFocus=focusId||null; if(focusId){ const ev=(db.events||[]).find(e=>e.id===focusId); if(ev){ const y=Number(evStart(ev).slice(0,4)); if(y) ui.boardYear=y; } } render(); if(focusId) setTimeout(()=>{ const el=document.getElementById("yc_"+focusId); if(el){ el.scrollIntoView({behavior:"smooth",block:"center"}); } },60); }
+function closeYieldBoard(){ ui.page=null; ui.yieldFocus=null; render(); }
+
+// อีเวนต์ที่จะแสดงบนหน้าแผนราคา (เกี่ยวข้องกับตึกที่ผู้ใช้ดูได้)
+function yieldBoardEvents(){
+  return (db.events||[]).filter(x=>eventScopeHotels(x).length>0);
+}
+// การ์ดหนึ่งอีเวนต์ในหน้าแผนราคา — แสดงตึกที่ผู้ใช้เกี่ยวข้อง + ปุ่มรับทราบ/ใส่แผนราคา
+function yieldEventCard(x,highlight){
+  const cat=EVENT_CATS[x.category]||x.category||"อีเวนต์";
+  const catCol=CAT_COLOR[x.category]||"#64748b";
+  const st=eventNotifState(x);
+  const notif = eventNotifActive(x) ? `<span class="badge" style="background:#fef9c3;color:#a16207;">🔔 ${notifDayLabel(x)}</span>` : (st==="past"?`<span class="badge" style="background:#f1f5f9;color:#94a3b8;">ผ่านไปแล้ว</span>`:"");
+  const rows=eventScopeHotels(x).map(h=>{
+    const editable=canEditPricing(h.id);
+    const ye=yieldEntry(x,h.id); const has=ye&&ye.text; const lv=yieldLevel(x,h.id);
+    const acked=ackEntry(x,h.id);
+    const lvBadge = lv&&PRICE_LEVELS[lv] ? `<span class="badge" style="${PRICE_LEVELS[lv].badge}">${PRICE_LEVELS[lv].short}</span>` : "";
+    const ackBadge = acked ? `<span class="badge" style="background:#dcfce7;color:#15803d;">✔ รับทราบแล้ว</span>` : `<span class="badge" style="background:#fee2e2;color:#b91c1c;">ยังไม่รับทราบ</span>`;
+    const meta = has&&ye.at ? `<div class="text-[10px] text-slate-400 mt-1">อัปเดต ${ye.at}${ye.by?(" · "+ye.by):""}</div>` : "";
+    const actions = editable ? `<div class="flex gap-2 mt-2 no-print">
+        ${!acked?`<button onclick="ackEvent('${x.id}','${h.id}')" class="text-[11px] font-semibold px-2.5 py-1 rounded-md" style="background:#0369a1;color:#fff;">✔ รับทราบ</button>`:""}
+        <button onclick="openYieldBox('${x.id}','${h.id}')" class="text-[11px] font-semibold px-2.5 py-1 rounded-md" style="background:${has?'#0f766e':'#0e7490'};color:#fff;">${has?'แก้ไขแผนราคา':'＋ ใส่แผนราคา'}</button>
+      </div>` : "";
+    return `<div class="rounded-xl border p-3" style="border-color:${has?'#99f6e4':'#e6ebf0'};background:${has?'#f0fdfa':'#fff'};">
+      <div class="flex items-center justify-between gap-2 flex-wrap">
+        <div class="text-sm font-bold" style="color:${h.accent||'#0e7490'}">${escHtml(h.name)}</div>
+        <div class="flex items-center gap-1.5 flex-wrap">${lvBadge}${ackBadge}</div>
+      </div>
+      <div class="text-sm text-slate-700 mt-1.5 whitespace-pre-line leading-snug">${has?escHtml(ye.text):`<span class="text-slate-400">${editable?'ยังไม่ได้วางแผนราคา':'ผจก.ตึกนี้ยังไม่วางแผนราคา'}</span>`}</div>
+      ${meta}
+      ${actions}
+    </div>`;
+  }).join("");
+  return `<div id="yc_${x.id}" class="card p-4 mb-3" style="${highlight?'border:1px solid #fcd34d;box-shadow:0 0 0 3px rgba(252,211,77,0.25);':''}">
+    <div class="flex flex-wrap items-start justify-between gap-2">
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="badge" style="background:${catCol}1a;color:${catCol};">${cat}</span>
+        <span class="text-xs text-slate-500">🗓️ ${evDateLabel(x)} · ${evDays(x)} วัน</span>
+        ${notif}
+      </div>
+    </div>
+    <div class="text-lg font-bold text-slate-800 mt-1.5">${escHtml(x.name)}</div>
+    <div class="text-sm text-slate-500 mt-0.5">📍 ${escHtml(eventLocLabel(x))}${x.scale?` &nbsp;·&nbsp; 👥 ${escHtml(x.scale)}`:""}</div>
+    ${x.activityPlan?`<div class="text-xs text-slate-500 mt-1">🎯 แผน Activity ฝ่ายขาย: ${escHtml(x.activityPlan)}</div>`:""}
+    <div class="grid gap-2 mt-3" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">${rows}</div>
+  </div>`;
+}
+
+function renderYieldBoard(){
+  ensureBoardDefaults();
+  const y=ui.boardYear;
+  const mine=yieldBoardEvents();
+  const notifs=viewerNotifEvents();
+  const canEditAny=canEditAnyPricing();
+  // สรุปตัวเลข
+  const needAtt=notifs.filter(eventNeedsAttention).length;
+  // การ์ดแจ้งเตือน (ล่วงหน้า 30 วัน + กำลังจัด) — ไฮไลต์ที่ต้องรีบทำ
+  const notifBlock = notifs.length
+    ? notifs.map(x=>yieldEventCard(x,true)).join("")
+    : `<div class="text-sm text-slate-400 px-1 py-3">— ไม่มีอีเวนต์ที่ใกล้ถึงภายใน ${NOTIF_WINDOW_DAYS} วัน —</div>`;
+  // อีเวนต์ทั้งปีที่เลือก (ไม่รวมที่ผ่านไปแล้ว จะอยู่ท้ายสุด)
+  const yearEvents=mine.filter(x=>evInYear(x,y)).sort((a,b)=>String(evStart(a)).localeCompare(String(evStart(b))));
+  const notifIds=new Set(notifs.map(x=>x.id));
+  const rest=yearEvents.filter(x=>!notifIds.has(x.id));
+  const restBlock = rest.length ? rest.map(x=>yieldEventCard(x,false)).join("")
+    : `<div class="text-sm text-slate-400 px-1 py-3">— ไม่มีอีเวนต์อื่นในปี ${y} —</div>`;
+
+  const roleBanner = canEditAny
+    ? `<div class="card p-3 mb-4" style="background:#fffbeb;border-color:#fde68a;">
+        <div class="text-sm text-amber-800">🏨 คุณคือ <b>ผู้จัดการโรงแรม</b> — เมื่อฝ่ายขายแจ้งอีเวนต์ ระบบจะเตือนคุณล่วงหน้า ${NOTIF_WINDOW_DAYS} วัน · กรุณากด <b>“✔ รับทราบ”</b> และ <b>ใส่แผนการทำราคา (Yield)</b> ของตึกคุณ${needAtt?` · <b class="text-rose-600">มี ${needAtt} อีเวนต์ที่ยังต้องดำเนินการ</b>`:""}</div>
+      </div>`
+    : `<div class="card p-3 mb-4" style="background:#ecfeff;border-color:#a5f3fc;">
+        <div class="text-sm text-cyan-800">🧑‍💼 หน้านี้ <b>อ่านอย่างเดียว</b>สำหรับฝ่ายขาย/ผู้บริหาร — ดูว่าช่วงไหน <b>ราคาสูงเป็นพิเศษ</b> เพื่อวางแผนงาน · การกรอกราคาเป็นหน้าที่ผู้จัดการแต่ละตึก</div>
+      </div>`;
+
+  return `
+  <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+    <div>
+      <div class="text-2xl font-bold text-slate-800">💰 แผนการทำราคา / Yield <span class="text-base font-normal text-slate-400">· รายตึก</span></div>
+      <div class="text-sm text-slate-500">ผู้จัดการแต่ละตึกรับทราบอีเวนต์และกรอกแผนราคาของตึกตัวเอง · ฝ่ายขายเห็นสถานะราคาแบบอ่านอย่างเดียว</div>
+    </div>
+    <div class="flex gap-2">
+      <button onclick="openEventBoard()" class="btn btn-ghost text-sm px-3 py-1.5">📅 ปฏิทินอีเวนต์</button>
+      <button onclick="closeYieldBoard()" class="btn btn-ghost text-sm px-3 py-1.5">← กลับหน้าหลัก</button>
+    </div>
+  </div>
+
+  ${roleBanner}
+
+  <div class="card p-4 mb-5">
+    <div class="flex flex-wrap items-center gap-3">
+      <label class="text-sm text-slate-600">ปี
+        <select onchange="setBoardYear(this.value)" class="pill-select ml-1 bg-slate-100 rounded-lg px-3 py-1.5 text-sm font-semibold">${boardYearOptions()}</select></label>
+      <div class="flex-1"></div>
+      <div class="text-sm"><span class="text-slate-400">ใกล้ถึง (≤${NOTIF_WINDOW_DAYS} วัน):</span> <b class="text-amber-600">${notifs.length}</b> งาน</div>
+      ${canEditAny?`<div class="text-sm"><span class="text-slate-400">ยังต้องทำ:</span> <b class="text-rose-600">${needAtt}</b> งาน</div>`:""}
+    </div>
+  </div>
+
+  <div class="mb-6">
+    <div class="flex items-center gap-2 mb-3">
+      <div class="section-title text-lg">🔔 แจ้งเตือน · อีเวนต์ที่ใกล้ถึง (ล่วงหน้า ${NOTIF_WINDOW_DAYS} วัน)</div>
+      <div class="text-sm text-slate-400">แจ้งเตือนจะหายเองอัตโนมัติเมื่อผ่านวันงานไปแล้ว</div>
+    </div>
+    ${notifBlock}
+  </div>
+
+  <div class="card p-4">
+    <div class="section-title text-lg mb-1">🗂️ อีเวนต์ทั้งหมด ปี ${y}</div>
+    <div class="text-sm text-slate-400 mb-3">รวมงานที่ยังมาไม่ถึงและที่ผ่านไปแล้ว (เรียงตามวันที่)</div>
+    ${restBlock}
+  </div>
+  `;
+}
+
+// ---- แถบแจ้งเตือนรวม (แสดงใต้แถบบนทุกหน้า เมื่อมีอีเวนต์ใกล้ถึง) ----
+function notifBannerHtml(){
+  if(!CLOUD) return "";
+  const notifs=viewerNotifEvents();
+  if(!notifs.length) return "";
+  if(ui.page==="yieldBoard") return ""; // อยู่หน้าแผนราคาอยู่แล้ว ไม่ต้องเตือนซ้ำ
+  const canEditAny=canEditAnyPricing();
+  const needAtt=notifs.filter(eventNeedsAttention).length;
+  const soonest=notifs[0];
+  const msg = canEditAny
+    ? (needAtt?`มี <b>${needAtt}</b> อีเวนต์ใกล้ถึงที่ตึกของคุณ<b>ยังไม่รับทราบ/ยังไม่วางแผนราคา</b>`
+             : `มี <b>${notifs.length}</b> อีเวนต์ใกล้ถึง — จัดการแผนราคาเรียบร้อยแล้ว ✔`)
+    : `มี <b>${notifs.length}</b> อีเวนต์ใกล้ถึงภายใน ${NOTIF_WINDOW_DAYS} วัน — ดูช่วงที่ราคาห้องจะสูงเป็นพิเศษ`;
+  const col = (canEditAny&&needAtt) ? "background:#fef2f2;border-color:#fecaca;" : "background:#fffbeb;border-color:#fde68a;";
+  return `<div class="no-print rounded-xl border px-4 py-2.5 mb-4 flex flex-wrap items-center gap-x-3 gap-y-1.5" style="${col}">
+    <span class="text-sm">🔔 <span class="font-medium">${escHtml(soonest.name)}</span> · ${notifDayLabel(soonest)}</span>
+    <span class="text-sm text-slate-600">${msg}</span>
+    <div class="flex-1"></div>
+    <button onclick="openYieldBoard()" class="btn btn-primary text-xs px-3 py-1.5">ดูแผนราคา/Yield →</button>
+  </div>`;
+}
+// กระดิ่งแจ้งเตือนบนแถบบน
+function notifBellHtml(){
+  if(!CLOUD) return "";
+  const n=notifBellCount();
+  const badge = n>0 ? `<span style="position:absolute;top:-5px;right:-5px;background:#ef4444;color:#fff;font-size:10px;font-weight:700;min-width:16px;height:16px;line-height:16px;text-align:center;border-radius:9999px;padding:0 3px;">${n}</span>` : "";
+  const title = n>0 ? n+" อีเวนต์ใกล้ถึง — คลิกเพื่อดูแผนราคา" : "ไม่มีอีเวนต์ใกล้ถึง";
+  return `<button onclick="openYieldBoard()" title="${title}" class="btn text-sm px-2.5 py-1.5 ${ui.page==='yieldBoard'?'bg-white text-cyan-800':'bg-white/20 hover:bg-white/30 text-white'}" style="position:relative;">🔔${badge}</button>`;
 }
 
 // ---- Export ปฏิทินอีเวนต์เป็น Excel ----
@@ -3750,6 +3996,18 @@ async function initCloud(){
   }
 }
 
+// ---- เฝ้าดูวันที่จริง: ถ้าข้ามวัน (เช่นเปิดแอปค้างข้ามคืน) ให้รีเฟรชเอง เพื่อให้แจ้งเตือน 30 วันแม่นยำ ----
+let __lastRealDate = realToday();
+function startDateWatch(){
+  setInterval(()=>{
+    const d=realToday();
+    if(d!==__lastRealDate){
+      __lastRealDate=d;
+      if(typeof db!=="undefined" && db && !isUserBusy()) render();  // ไม่รีเฟรชทับตอนกำลังพิมพ์
+    }
+  }, 60*1000);  // ตรวจทุก 1 นาที
+}
+
 // ============================================================
 // INIT
 // ============================================================
@@ -3759,6 +4017,7 @@ if (CLOUD && sb){
   loadData();                // โหมดออฟไลน์: ใช้ข้อมูลในเครื่อง (localStorage)
   render();
 }
+startDateWatch();            // อัปเดตวันที่/แจ้งเตือนอัตโนมัติตามวันจริง
 // เมื่อผู้ใช้พิมพ์เสร็จ (เลิกโฟกัสช่องกรอก) แล้วมีอัปเดตจากทีมค้างอยู่ → รีเฟรชให้เห็นข้อมูลล่าสุด
 document.addEventListener("focusout", ()=>{ setTimeout(flushPendingRender, 150); });
 </script>
