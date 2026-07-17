@@ -164,8 +164,16 @@ const HM_ACCESS = {
 };
 function hmHotelsFor(em){
   em = (em||"").toLowerCase();
+  const au = appUserFor(em);
+  if(au && au.role==="hm" && Array.isArray(au.hotelIds) && au.hotelIds.length) return au.hotelIds;
   for(const k in HM_ACCESS){ if(k.toLowerCase()===em) return HM_ACCESS[k]; }
   return null;
+}
+// ค้นหา "ผู้ใช้ที่เพิ่มจากหน้าโปรแกรม" ตามอีเมล (ต้อง active) — ใช้กำหนดสิทธิ์แทน/เสริม config ในโค้ด
+function appUserFor(em){
+  em = (em||"").toLowerCase();
+  if(!em || !db || !Array.isArray(db.appUsers)) return null;
+  return db.appUsers.find(u=>(u.email||"").toLowerCase()===em && u.active!==false) || null;
 }
 
 /* ผูก "อีเมลของฝ่ายขายแต่ละคน" กับ "รหัสเซลล์ (salesId)" ของตัวเอง
@@ -197,7 +205,7 @@ let cloudSnapshot = null;      // สำเนา db ที่ตรงกับ
 let pendingRemoteRender = false; // มีอัปเดตจากทีมค้างอยู่ รอผู้ใช้พิมพ์เสร็จค่อยรีเฟรช
 const CLIENT_ID = Math.random().toString(36).slice(2); // ระบุว่า update นี้มาจากเครื่องเรา
 // ทุกคอลเลกชันที่ซิงค์ (แต่ละ “รายการ” มี id ของตัวเอง → บันทึกแยกกันได้ ไม่ทับกัน)
-const CLOUD_COLLECTIONS = ["hotels","salesReps","accounts","pipeline","functionEvents","activities","forecasts","revenue","partners","newCompanies","lostBusiness","events","opportunities"];
+const CLOUD_COLLECTIONS = ["hotels","salesReps","accounts","pipeline","functionEvents","activities","forecasts","revenue","partners","newCompanies","lostBusiness","events","opportunities","appUsers"];
 if (CLOUD && window.supabase) sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   // ความปลอดภัย: เก็บ session ไว้ใน sessionStorage (ไม่ใช่ localStorage)
   //  → ปิดหน้าต่าง/แท็บเมื่อไหร่ session จะหายทันที ต้องล็อกอินใหม่เสมอ
@@ -215,6 +223,8 @@ function currentEmail(){ return (currentUser && currentUser.email || "").toLower
 // หา salesId ของอีเมลนี้ (จาก config SALES_EMAILS หรือช่องอีเมลที่ผูกไว้กับตัวเซลล์)
 function salesIdForEmail(em){
   em = (em||"").toLowerCase();
+  const au = appUserFor(em);
+  if(au && au.role==="sales" && au.salesId) return au.salesId;
   for(const k in SALES_EMAILS){ if(k.toLowerCase()===em) return SALES_EMAILS[k]; }
   const rep = ((db && db.salesReps) || []).find(s=>(s.email||"").toLowerCase()===em && em);
   return rep ? rep.id : null;
@@ -224,7 +234,11 @@ function mySalesId(){ return salesIdForEmail(currentEmail()); }
 function userRole(){
   if(!CLOUD) return "owner";
   const em = currentEmail();
+  // เจ้าของกิจการ (จากโค้ด) = สิทธิ์สูงสุดเสมอ กันล็อกตัวเองออกจากระบบ
   if(OWNER_EMAILS.map(e=>e.toLowerCase()).includes(em)) return "owner";
+  // สิทธิ์ที่เจ้าของกำหนดจากหน้าโปรแกรม (มาก่อน config เดิมในโค้ด)
+  const au = appUserFor(em);
+  if(au && au.role) return au.role;
   if(FINANCE_EMAILS.map(e=>e.toLowerCase()).includes(em)) return "finance";
   if(salesIdForEmail(em)) return "sales";
   if(hmHotelsFor(em)) return "hm";
@@ -544,6 +558,17 @@ function normalizeData(){
   db.years = db.years.map(Number).sort((a,b)=>a-b);
   db.targets = db.targets || {};
   db.hotelTargets = db.hotelTargets || {};   // { hotelId: { year: number } } — เป้ารายโรงแรม
+  // ---- ผู้ใช้ที่เพิ่ม/กำหนดสิทธิ์จากหน้าโปรแกรม (เจ้าของเป็นผู้จัดการ) ----
+  // แต่ละรายการ = { id, email, role, name, salesId, hotelIds, active }
+  db.appUsers = (Array.isArray(db.appUsers) ? db.appUsers : []).map(u=>({
+    id: u.id || uid("usr"),
+    email: (u.email||"").trim().toLowerCase(),
+    role: u.role || "viewer",
+    name: u.name || "",
+    salesId: u.salesId || "",
+    hotelIds: Array.isArray(u.hotelIds) ? u.hotelIds : [],
+    active: u.active!==false
+  })).filter(u=>u.email);
 }
 // ห้ามเขียนขึ้นคลาวด์เฉพาะ "ผู้ดูอย่างเดียวจริง ๆ" (viewer)
 // หมายเหตุ: ผู้จัดการโรงแรม (hm) ต้องเขียนได้ เพื่อบันทึก "แผนการทำราคา/Yield" ของตึกตัวเอง
@@ -595,7 +620,7 @@ function cloudSyncChanges(){
 
 function rebuildDbFromRows(rows){
   const base = defaultData();
-  const out = { hotels:[], salesReps:[], accounts:[], pipeline:[], functionEvents:[], activities:[], forecasts:[], revenue:[], partners:[], newCompanies:[], lostBusiness:[], events:[], opportunities:[], years:base.years, targets:{}, hotelTargets:{} };
+  const out = { hotels:[], salesReps:[], accounts:[], pipeline:[], functionEvents:[], activities:[], forecasts:[], revenue:[], partners:[], newCompanies:[], lostBusiness:[], events:[], opportunities:[], appUsers:[], years:base.years, targets:{}, hotelTargets:{} };
   for(const r of rows){
     if(r.deleted) continue;
     if(r.collection==="meta"){ if(r.data){ out.years=r.data.years||out.years; out.targets=r.data.targets||{}; out.hotelTargets=r.data.hotelTargets||{}; if(Array.isArray(r.data.customerGroups)&&r.data.customerGroups.length) out.customerGroups=r.data.customerGroups; } continue; }
@@ -870,6 +895,7 @@ function renderTopBar(){
         ${CLOUD ? roleBadgeHtml() : ""}
         ${CLOUD ? `<span id="cloudStatus" class="text-xs" style="color:#a7f3d0;">●</span>` : `<span class="text-xs" style="color:#fde68a;" title="กำลังใช้งานแบบออฟไลน์ในเครื่องนี้">ออฟไลน์</span>`}
         <button onclick="showWeeklySummary()" title="สร้าง/ส่งสรุปยอดขายประจำสัปดาห์เข้า LINE" class="btn text-xs bg-white/20 hover:bg-white/30 text-white px-3 py-1.5">📤 สรุปสัปดาห์</button>
+        ${canManage() ? `<button onclick="openUserManager()" title="เพิ่ม/แก้ไข/ลบผู้ใช้ และกำหนดสิทธิ์การใช้งาน (เฉพาะเจ้าของกิจการ)" class="btn text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-1.5">👤 จัดการผู้ใช้</button>` : ""}
         ${canManage() ? `<button onclick="exportData()" title="ดาวน์โหลดข้อมูลสำรองทั้งหมด (เฉพาะเจ้าของ)" class="btn text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-1.5">Export</button>
         <label class="ro-hide btn text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 cursor-pointer">Import
           <input type="file" accept="application/json" class="hidden" onchange="importData(event)" />
@@ -2115,6 +2141,206 @@ function deleteSales(id){
   syncLookups();
   if(ui.currentSales===id) ui.currentSales = db.salesReps[0].id;
   saveData(); closeModal(); render();
+}
+
+// ============================================================
+// USER MANAGEMENT — จัดการผู้ใช้ + กำหนดสิทธิ์ (เฉพาะเจ้าของกิจการ)
+// ============================================================
+const ROLE_LABELS = {
+  owner:  "👑 เจ้าของกิจการ · แก้ได้ทุกหน้า",
+  finance:"🧮 ฝ่ายบัญชี · แก้เฉพาะยอดขาย/รายได้",
+  sales:  "🧑‍💼 ฝ่ายขาย · แก้เฉพาะข้อมูลของตัวเอง",
+  hm:     "🏨 ผจก.โรงแรม · ดูอย่างเดียว (เฉพาะตึกที่กำหนด)",
+  viewer: "👁 ดูอย่างเดียว",
+};
+function roleLabel(r){ return ROLE_LABELS[r] || r || "-"; }
+
+// Supabase client แยกอีกตัว (storageKey คนละอัน) ไว้ "สร้างบัญชี login ใหม่"
+// โดยไม่กระทบ session ของเจ้าของที่ล็อกอินอยู่
+let sbSignup = null;
+function getSignupClient(){
+  if(sbSignup) return sbSignup;
+  if(!window.supabase) return null;
+  sbSignup = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth:{ storage: window.sessionStorage, storageKey:"plaai_signup_tmp", persistSession:false, autoRefreshToken:false }
+  });
+  return sbSignup;
+}
+async function createLoginAccount(email, password){
+  const c = getSignupClient();
+  if(!c) throw new Error("ไม่มีการเชื่อมต่อ Supabase");
+  const { data, error } = await c.auth.signUp({ email, password });
+  try{ await c.auth.signOut(); }catch(e){}
+  if(error) throw error;
+  return data;
+}
+
+// สรุปผู้ใช้จาก config ในโค้ด (แสดงเป็นข้อมูลอ้างอิง แก้ที่นี่ไม่ได้)
+function configUsersList(){
+  const rows = [];
+  OWNER_EMAILS.forEach(e=>rows.push({ email:e, role:"owner", detail:"" }));
+  FINANCE_EMAILS.forEach(e=>rows.push({ email:e, role:"finance", detail:"" }));
+  Object.entries(SALES_EMAILS).forEach(([e,sid])=>rows.push({ email:e, role:"sales", detail:"เซลล์: "+((salesById(sid)&&salesById(sid).name)||sid) }));
+  Object.entries(HM_ACCESS).forEach(([e,ids])=>rows.push({ email:e, role:"hm", detail:"ตึก: "+ids.map(id=>(hotelById(id)&&hotelById(id).name)||id).join(", ") }));
+  return rows;
+}
+
+function openUserManager(){
+  if(!guardManage()) return;
+  const users = (db.appUsers||[]).slice().sort((a,b)=>a.email.localeCompare(b.email));
+  const appRows = users.length ? users.map(u=>{
+    let detail = "";
+    if(u.role==="sales") detail = "เซลล์: "+((salesById(u.salesId)&&salesById(u.salesId).name)||u.salesId||"—");
+    if(u.role==="hm")    detail = "ตึก: "+((u.hotelIds||[]).map(id=>(hotelById(id)&&hotelById(id).name)||id).join(", ")||"—");
+    return `<tr class="border-b last:border-0">
+      <td class="py-2 pr-2">
+        <div class="font-medium text-slate-800">${escHtml(u.email)}</div>
+        ${u.name?`<div class="text-xs text-slate-400">${escHtml(u.name)}</div>`:""}
+        ${u.active===false?`<div class="text-xs text-rose-500">ปิดการใช้งานอยู่</div>`:""}
+      </td>
+      <td class="py-2 pr-2"><span class="badge" style="background:#e0f2fe;color:#075985;">${roleLabel(u.role)}</span>
+        ${detail?`<div class="text-xs text-slate-400 mt-0.5">${escHtml(detail)}</div>`:""}</td>
+      <td class="py-2 text-right whitespace-nowrap">
+        <button onclick="openAppUserForm('${u.id}')" class="btn btn-ghost text-xs px-2 py-1">✎ แก้ไข</button>
+        <button onclick="deleteAppUser('${u.id}')" class="text-rose-500 text-xs px-2 py-1">ลบ</button>
+      </td></tr>`;
+  }).join("") : `<tr><td colspan="3" class="py-4 text-center text-slate-400 text-sm">ยังไม่มีผู้ใช้ที่เพิ่มจากหน้านี้ — กด “＋ เพิ่มผู้ใช้” เพื่อเริ่ม</td></tr>`;
+
+  const cfgRows = configUsersList().map(u=>`<tr class="border-b last:border-0">
+      <td class="py-1.5 pr-2 text-slate-600">${escHtml(u.email)}</td>
+      <td class="py-1.5 text-slate-500">${roleLabel(u.role)}${u.detail?` · ${escHtml(u.detail)}`:""}</td>
+    </tr>`).join("");
+
+  document.getElementById("modalRoot").innerHTML = `
+  <div class="fixed inset-0 modal-backdrop flex items-center justify-center z-50" onclick="if(event.target===this) closeModal()">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+      <div class="px-5 py-4 border-b flex justify-between items-center sticky top-0 bg-white z-10">
+        <div>
+          <div class="font-semibold text-lg text-slate-800">👤 จัดการผู้ใช้</div>
+          <div class="text-xs text-slate-400">เพิ่ม/แก้ไขผู้ใช้ และกำหนดสิทธิ์ได้จากหน้านี้เลย (เฉพาะเจ้าของกิจการ)</div>
+        </div>
+        <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700">✕</button>
+      </div>
+      <div class="px-5 py-4 space-y-4">
+        <div class="flex items-center justify-between">
+          <div class="section-title">ผู้ใช้ที่เพิ่มจากแอป</div>
+          <button onclick="openAppUserForm()" class="btn btn-primary text-sm px-3 py-1.5">＋ เพิ่มผู้ใช้</button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm"><tbody>${appRows}</tbody></table>
+        </div>
+
+        <details class="rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2">
+          <summary class="text-sm font-medium text-slate-600 cursor-pointer">ผู้ใช้จากโค้ดตั้งต้น (อ้างอิง · แก้ที่นี่ไม่ได้)</summary>
+          <div class="text-xs text-slate-400 mt-1 mb-2">รายชื่อที่ตั้งไว้ในไฟล์โปรแกรม — ถ้าต้องการเปลี่ยนสิทธิ์ ให้เพิ่มอีเมลเดียวกันในตาราง “ผู้ใช้ที่เพิ่มจากแอป” ด้านบน (ระบบจะยึดค่าที่ตั้งจากแอปก่อน · ยกเว้นเจ้าของกิจการที่คงสิทธิ์สูงสุดเสมอ)</div>
+          <table class="w-full text-xs"><tbody>${cfgRows}</tbody></table>
+        </details>
+
+        <div class="text-xs text-slate-400 leading-relaxed border-t pt-3">
+          หมายเหตุ: การกำหนดสิทธิ์ที่นี่คุมว่า “อีเมลไหนเห็น/แก้อะไรได้” ส่วนการ <b>เข้าสู่ระบบ</b> ต้องมีบัญชี (อีเมล+รหัสผ่าน) ใน Supabase ด้วย
+          — ตอนเพิ่มผู้ใช้ สามารถติ๊ก “สร้างบัญชี login ให้เลย” เพื่อสร้างรหัสผ่านได้จากหน้านี้ (ถ้า Supabase ตั้งให้ยืนยันอีเมล ผู้ใช้ต้องกดลิงก์ยืนยันก่อนถึงจะล็อกอินได้)
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function roleFieldOptions(sel){
+  return Object.keys(ROLE_LABELS).map(r=>`<option value="${r}" ${r===sel?"selected":""}>${roleLabel(r)}</option>`).join("");
+}
+function openAppUserForm(id){
+  if(!guardManage()) return;
+  const ex = id ? (db.appUsers||[]).find(u=>u.id===id) : null;
+  const role = ex ? ex.role : "viewer";
+  const hotelChecks = HOTELS.map(h=>`<label class="inline-flex items-center gap-1 mr-3 mb-1 text-sm">
+      <input type="checkbox" class="hm_hotel" value="${h.id}" ${ex&&(ex.hotelIds||[]).includes(h.id)?"checked":""}/> ${escHtml(h.name)}</label>`).join("");
+  const body = `
+    <label class="block text-sm">อีเมล
+      <input id="f_email" type="email" value="${escAttr(ex?ex.email:"")}" class="${inputCls}" placeholder="user@company.com" ${ex?'':''}/></label>
+    <label class="block text-sm">ชื่อ (ไม่บังคับ)
+      <input id="f_name" value="${escAttr(ex?ex.name||"":"")}" class="${inputCls}" placeholder="เช่น คุณสมชาย"/></label>
+    <label class="block text-sm">สิทธิ์การใช้งาน
+      <select id="f_role" class="${inputCls}" onchange="onAppUserRoleChange()">${roleFieldOptions(role)}</select></label>
+
+    <div id="row_sales" class="block text-sm" style="display:${role==="sales"?"block":"none"}">
+      <div>ผูกกับฝ่ายขาย (เซลล์)</div>
+      <select id="f_sales" class="${inputCls}">${SALES_REPS.map(s=>`<option value="${s.id}" ${ex&&ex.salesId===s.id?"selected":""}>${escHtml(s.name)}</option>`).join("")}</select>
+      <div class="text-xs text-slate-400 mt-1">บัญชีนี้จะแก้ได้เฉพาะข้อมูลของเซลล์ที่เลือก</div>
+    </div>
+
+    <div id="row_hm" class="block text-sm" style="display:${role==="hm"?"block":"none"}">
+      <div>โรงแรมที่ดูได้ (ผจก.โรงแรม)</div>
+      <div class="mt-1">${hotelChecks}</div>
+      <div class="text-xs text-slate-400 mt-1">เห็นเฉพาะตึกที่เลือก + ภาพรวมทั้งกลุ่ม (ดูอย่างเดียว)</div>
+    </div>
+
+    <div class="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
+      <label class="inline-flex items-center gap-2 text-sm">
+        <input type="checkbox" id="f_makelogin" onchange="document.getElementById('row_pw').style.display=this.checked?'block':'none'" ${ex?'':'checked'}/>
+        สร้างบัญชี login ให้เลย (ตั้งรหัสผ่าน)
+      </label>
+      <div id="row_pw" style="display:${ex?'none':'block'}">
+        <input id="f_pw" type="text" class="${inputCls}" placeholder="รหัสผ่านเริ่มต้น (อย่างน้อย 6 ตัวอักษร)"/>
+        <div class="text-xs text-slate-400 mt-1">สร้างบัญชีเข้าสู่ระบบใน Supabase ให้อัตโนมัติ · ถ้าอีเมลนี้มีบัญชีอยู่แล้วจะข้ามให้</div>
+      </div>
+    </div>
+    <input type="hidden" id="f_id" value="${ex?ex.id:''}"/>`;
+  const footer = ex ? `<button type="button" onclick="deleteAppUser('${ex.id}')" class="text-rose-500 text-xs">ลบผู้ใช้คนนี้</button>` : "";
+  document.getElementById("modalRoot").innerHTML = modalShell(ex?"แก้ไขผู้ใช้":"เพิ่มผู้ใช้ใหม่", body, "submitAppUser", footer);
+}
+function onAppUserRoleChange(){
+  const r = val("f_role");
+  const rs = document.getElementById("row_sales"), rh = document.getElementById("row_hm");
+  if(rs) rs.style.display = (r==="sales") ? "block" : "none";
+  if(rh) rh.style.display = (r==="hm") ? "block" : "none";
+}
+async function submitAppUser(){
+  if(!guardManage()) return;
+  const id = val("f_id");
+  const email = (val("f_email")||"").trim().toLowerCase();
+  const role = val("f_role");
+  const name = (val("f_name")||"").trim();
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ alert("กรุณากรอกอีเมลให้ถูกต้อง"); return; }
+  const dup = (db.appUsers||[]).find(u=>u.email.toLowerCase()===email && u.id!==id);
+  if(dup){ alert("มีอีเมลนี้อยู่ในรายการแล้ว"); return; }
+  const rec = { email, role, name, salesId:"", hotelIds:[], active:true };
+  if(role==="sales"){ rec.salesId = val("f_sales")||""; if(!rec.salesId){ alert("กรุณาเลือกฝ่ายขายที่จะผูกกับบัญชีนี้"); return; } }
+  if(role==="hm"){
+    rec.hotelIds = Array.from(document.querySelectorAll(".hm_hotel:checked")).map(x=>x.value);
+    if(!rec.hotelIds.length){ alert("กรุณาเลือกโรงแรมอย่างน้อย 1 แห่งสำหรับผู้จัดการโรงแรม"); return; }
+  }
+  if(id){ const u=(db.appUsers||[]).find(x=>x.id===id); if(u) Object.assign(u, rec); }
+  else { rec.id = uid("usr"); db.appUsers = db.appUsers||[]; db.appUsers.push(rec); }
+  saveData();
+
+  // สร้างบัญชี login (ไม่บังคับ)
+  const wantLogin = !!(document.getElementById("f_makelogin") && document.getElementById("f_makelogin").checked);
+  const pw = (val("f_pw")||"").trim();
+  if(wantLogin && pw){
+    if(pw.length<6){ alert("บันทึกสิทธิ์ผู้ใช้แล้ว ✓ แต่รหัสผ่านสั้นเกินไป (ต้องอย่างน้อย 6 ตัว) จึงยังไม่ได้สร้างบัญชี login"); openUserManager(); return; }
+    try{
+      const res = await createLoginAccount(email, pw);
+      const confirmed = res && (res.session || (res.user && (res.user.confirmed_at || res.user.email_confirmed_at)));
+      if(confirmed) alert("เพิ่มผู้ใช้และสร้างบัญชี login เรียบร้อย ✓\nผู้ใช้ล็อกอินด้วยอีเมล + รหัสผ่านนี้ได้เลย");
+      else alert("เพิ่มผู้ใช้แล้ว ✓ และสร้างบัญชี login แล้ว\nแต่ Supabase ตั้งค่าให้ยืนยันอีเมลก่อน — แจ้งผู้ใช้เปิดอีเมลกดลิงก์ยืนยัน หรือแอดมินกด Confirm ในหน้า Supabase");
+    }catch(e){
+      const m=(e.message||"").toLowerCase();
+      if(m.includes("already")||m.includes("registered")||m.includes("exist"))
+        alert("บันทึกสิทธิ์ผู้ใช้แล้ว ✓ (อีเมลนี้มีบัญชี login ใน Supabase อยู่แล้ว จึงไม่สร้างซ้ำ)");
+      else
+        alert("บันทึกสิทธิ์ผู้ใช้แล้ว ✓ แต่สร้างบัญชี login ไม่สำเร็จ: "+(e.message||e)+"\nสร้างบัญชีในหน้า Supabase (Authentication > Users) แทนได้");
+    }
+  }
+  openUserManager();
+}
+function deleteAppUser(id){
+  if(!guardManage()) return;
+  const u = (db.appUsers||[]).find(x=>x.id===id);
+  if(!u) return;
+  if(!confirm("ลบผู้ใช้ “"+u.email+"” ออกจากรายการสิทธิ์?\n(บัญชี login ใน Supabase จะไม่ถูกลบ — หากต้องการปิดการเข้าระบบให้ลบในหน้า Supabase ด้วย)")) return;
+  db.appUsers = (db.appUsers||[]).filter(x=>x.id!==id);
+  saveData();
+  openUserManager();
 }
 
 // ============================================================
@@ -3950,7 +4176,7 @@ function renderLogin(msg){
         <input id="login_pw" type="password" class="${inputCls}" placeholder="••••••••" onkeydown="if(event.key==='Enter')doLogin()"/></label>
       <div id="login_err" class="text-xs text-rose-500 mt-2 min-h-[16px]">${msg||""}</div>
       <button onclick="doLogin()" class="btn btn-primary w-full py-2 mt-2">เข้าสู่ระบบ</button>
-      <div class="text-xs text-slate-400 mt-3">บัญชีผู้ใช้เพิ่มได้จากหน้า Supabase (Authentication &gt; Users) โดยผู้ดูแลระบบ</div>
+      <div class="text-xs text-slate-400 mt-3">บัญชีผู้ใช้เพิ่มได้โดยเจ้าของกิจการจากปุ่ม “👤 จัดการผู้ใช้” ในแอป หรือจากหน้า Supabase (Authentication &gt; Users)</div>
     </div>
   </div>
   <div id="modalRoot"></div>`;
