@@ -75,6 +75,35 @@
                    font-size:12px; font-weight:700; background:#0e7490; color:#fff; white-space:nowrap; }
   .section-action:hover{ background:#0c6a86; transform:translateY(-1px); }
   .status-note{ margin-top:3px; font-size:11px; color:#be123c; max-width:240px; }
+  /* ตัวเลือกวัน/เดือน/ปีแบบกระชับ ใช้รูปแบบเดียวกันทั้งระบบ */
+  .smart-date-btn{ display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; min-width:132px;
+    border:1px solid var(--line); border-radius:10px; padding:7px 10px; background:#fff; color:var(--ink); cursor:pointer;
+    font-size:13px; line-height:1.25; box-shadow:0 1px 2px rgba(15,23,42,.04); }
+  .smart-date-btn:hover{ border-color:#94a3b8; }
+  .smart-date-btn:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 3px rgba(14,116,144,.13); }
+  .smart-date-native{ position:absolute !important; width:1px !important; height:1px !important; opacity:0 !important; pointer-events:none !important; }
+  .smart-date-pop{ position:fixed; z-index:10000; width:300px; max-width:calc(100vw - 24px); background:#fff; border:1px solid #dbe3ea;
+    border-radius:14px; box-shadow:0 18px 48px rgba(15,34,51,.22); padding:12px; }
+  .smart-date-head{ display:grid; grid-template-columns:36px 1fr 36px; align-items:center; gap:6px; margin-bottom:10px; }
+  .smart-date-head button,.smart-year-step{ height:34px; border:1px solid var(--line); border-radius:9px; background:#f8fafc; font-weight:700; color:#334155; }
+  .smart-date-title{ text-align:center; font-weight:800; color:#0f2233; }
+  .smart-year-row{ display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:10px; }
+  .smart-year-row .smart-year-step{ width:38px; }
+  .smart-year-value{ min-width:86px; text-align:center; font-weight:800; font-size:16px; }
+  .smart-month-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
+  .smart-month-grid button,.smart-day-grid button{ border:0; border-radius:8px; background:#f8fafc; color:#334155; cursor:pointer; }
+  .smart-month-grid button{ padding:9px 4px; font-size:12px; }
+  .smart-month-grid button:hover,.smart-day-grid button:hover{ background:#e0f2fe; color:#075985; }
+  .smart-month-grid button.active,.smart-day-grid button.active{ background:var(--accent); color:#fff; font-weight:800; }
+  .smart-week,.smart-day-grid{ display:grid; grid-template-columns:repeat(7,1fr); gap:3px; text-align:center; }
+  .smart-week{ color:#94a3b8; font-size:10px; margin-bottom:4px; }
+  .smart-day-grid button{ aspect-ratio:1; font-size:12px; }
+  .smart-day-grid button.muted{ color:#cbd5e1; background:transparent; cursor:default; }
+  .smart-date-foot{ display:flex; justify-content:space-between; gap:8px; border-top:1px solid #eef2f6; margin-top:10px; padding-top:9px; }
+  .smart-date-foot button{ border:0; background:transparent; color:#0e7490; font-size:12px; font-weight:700; cursor:pointer; }
+  .date-range-fields{ display:grid; grid-template-columns:minmax(132px,1fr) auto minmax(132px,1fr); gap:7px; align-items:end; }
+  .date-range-sep{ color:#94a3b8; padding-bottom:9px; font-size:12px; }
+  @media(max-width:520px){ .date-range-fields{ grid-template-columns:1fr; } .date-range-sep{ display:none; } }
   .attachment-chip{ display:inline-flex; align-items:center; gap:4px; margin:2px 4px 2px 0; padding:3px 7px;
                     border-radius:7px; background:#eef6f8; color:#0e7490; font-size:11px; font-weight:600; }
   /* solid, clearly-visible quick-add buttons */
@@ -439,6 +468,90 @@ function currentYear(){ return Number(todayStr().slice(0,4))||new Date().getFull
 function addMonthsKey(key,n){ let [y,m]=key.split("-").map(Number); m+=n; while(m>12){m-=12;y+=1;} while(m<1){m+=12;y-=1;} return y+"-"+String(m).padStart(2,"0"); }
 function monthLabel(key){ const [y,m]=key.split("-").map(Number); return THAI_MONTHS[m-1]+" "+y; }
 function next6Months(startKey){ const arr=[]; let k=startKey||currentMonthKey(); for(let i=0;i<6;i++){ arr.push(k); k=addMonthsKey(k,1);} return arr; }
+function firstDayOfMonthKey(key){ return key+"-01"; }
+function lastDayOfMonthKey(key){ const [y,m]=key.split("-").map(Number); return key+"-"+String(new Date(y,m,0).getDate()).padStart(2,"0"); }
+function dateInRange(d,from,to){ return !!d && (!from||d>=from) && (!to||d<=to); }
+function rangesOverlap(start,end,from,to){ start=start||end||""; end=end||start; return !!start && (!to||start<=to) && (!from||end>=from); }
+function shortDateLabel(v){
+  if(!v) return "เลือกวันที่";
+  const p=v.split("-").map(Number); if(p.length<3) return v;
+  return p[2]+" "+THAI_MONTHS[p[1]-1]+" "+p[0];
+}
+
+// ปฏิทินแบบสั้น: ปีใช้ปุ่มก่อนหน้า/ถัดไป ไม่แสดงรายการปียาวเป็นพรืด
+let smartDateState=null;
+function enhanceDateInputs(root){
+  (root||document).querySelectorAll('input[type="date"],input[type="month"]').forEach(inp=>{
+    if(inp.dataset.smartDate) return;
+    inp.dataset.smartDate="1"; inp.classList.add("smart-date-native");
+    const btn=document.createElement("button"); btn.type="button"; btn.className="smart-date-btn";
+    btn.innerHTML='<span></span><span aria-hidden="true">▣</span>';
+    btn.setAttribute("aria-label", inp.type==="month"?"เลือกเดือนและปี":"เลือกวัน เดือน และปี");
+    btn.onclick=(e)=>{ e.preventDefault(); openSmartDate(inp,btn); };
+    inp.insertAdjacentElement("afterend",btn); updateSmartDateButton(inp);
+  });
+  (root||document).querySelectorAll('select,input[type="number"]#f_year').forEach(inp=>{
+    if(inp.dataset.smartDate) return;
+    const isYearNumber=inp.matches('input[type="number"]#f_year');
+    const vals=isYearNumber?[]:Array.from(inp.options).map(o=>o.value).filter(Boolean);
+    if(!isYearNumber && (!vals.length||!vals.every(v=>/^\d{4}$/.test(v)))) return;
+    inp.dataset.smartDate="1"; inp.dataset.smartKind="year"; inp.classList.add("smart-date-native");
+    const btn=document.createElement("button"); btn.type="button"; btn.className="smart-date-btn"; btn.innerHTML='<span></span><span aria-hidden="true">▣</span>';
+    btn.setAttribute("aria-label","เลือกปี"); btn.onclick=e=>{e.preventDefault();openSmartDate(inp,btn);}; inp.insertAdjacentElement("afterend",btn); updateSmartDateButton(inp);
+  });
+}
+function updateSmartDateButton(inp){
+  const btn=inp.nextElementSibling; if(!btn||!btn.classList.contains("smart-date-btn")) return;
+  btn.firstElementChild.textContent=inp.dataset.smartKind==="year"?(inp.value?"ปี "+inp.value:"ทุกปี"):(inp.type==="month"?(inp.value?monthLabel(inp.value):"เลือกเดือน"):shortDateLabel(inp.value));
+}
+function closeSmartDate(){ const p=document.getElementById("smartDatePop"); if(p)p.remove(); smartDateState=null; }
+function setSmartDateValue(value){
+  const inp=smartDateState&&smartDateState.input; if(!inp)return;
+  inp.value=value; updateSmartDateButton(inp); inp.dispatchEvent(new Event("change",{bubbles:true})); closeSmartDate();
+}
+function openSmartDate(inp,btn){
+  closeSmartDate();
+  const kind=inp.dataset.smartKind||inp.type;
+  const fallback=kind==="year"?String(currentYear()):(kind==="month"?currentMonthKey():todayStr());
+  const now=(inp.value||fallback).split("-").map(Number);
+  smartDateState={input:inp,button:btn,type:kind,year:now[0]||currentYear(),month:now[1]||1,day:now[2]||1};
+  const pop=document.createElement("div"); pop.id="smartDatePop"; pop.className="smart-date-pop"; document.body.appendChild(pop);
+  positionSmartDate(); drawSmartDate();
+}
+function positionSmartDate(){
+  const s=smartDateState,p=document.getElementById("smartDatePop"); if(!s||!p)return;
+  const r=s.button.getBoundingClientRect(), w=Math.min(300,window.innerWidth-24), left=Math.max(12,Math.min(r.left,window.innerWidth-w-12));
+  const below=r.bottom+6, top=(below+360<window.innerHeight)?below:Math.max(12,r.top-360);
+  p.style.left=left+"px"; p.style.top=top+"px";
+}
+function shiftSmartYear(n){ smartDateState.year=Math.max(2000,Math.min(2100,smartDateState.year+n)); drawSmartDate(); }
+function shiftSmartMonth(n){ let m=smartDateState.month+n,y=smartDateState.year; if(m>12){m=1;y++;}if(m<1){m=12;y--;}smartDateState.month=m;smartDateState.year=Math.max(2000,Math.min(2100,y));drawSmartDate(); }
+function chooseSmartMonth(m){ smartDateState.month=m; setSmartDateValue(smartDateState.year+"-"+String(m).padStart(2,"0")); }
+function chooseSmartDay(d){ setSmartDateValue(smartDateState.year+"-"+String(smartDateState.month).padStart(2,"0")+"-"+String(d).padStart(2,"0")); }
+function chooseSmartYear(y){ setSmartDateValue(String(y)); }
+function drawSmartDate(){
+  const s=smartDateState,p=document.getElementById("smartDatePop"); if(!s||!p)return;
+  const selected=s.input.value;
+  if(s.type==="year"){
+    const years=Array.from({length:9},(_,i)=>s.year-4+i);
+    const allowBlank=s.input.tagName==="SELECT"&&Array.from(s.input.options).some(o=>o.value==="");
+    p.innerHTML=`<div class="smart-year-row"><button class="smart-year-step" onclick="shiftSmartYear(-1)" aria-label="ปีก่อน">−</button><div class="smart-year-value">ปี ${s.year}</div><button class="smart-year-step" onclick="shiftSmartYear(1)" aria-label="ปีถัดไป">＋</button></div>
+      <div class="smart-month-grid">${years.map(y=>`<button class="${String(y)===selected?'active':''}" onclick="chooseSmartYear(${y})">${y}</button>`).join("")}</div>
+      <div class="smart-date-foot">${allowBlank?'<button onclick="setSmartDateValue(\'\')">ทุกปี</button>':'<span></span>'}<button onclick="chooseSmartYear(currentYear())">ปีนี้</button></div>`;
+  }else if(s.type==="month"){
+    p.innerHTML=`<div class="smart-year-row"><button class="smart-year-step" onclick="shiftSmartYear(-1)" aria-label="ปีก่อน">−</button><div class="smart-year-value">ปี ${s.year}</div><button class="smart-year-step" onclick="shiftSmartYear(1)" aria-label="ปีถัดไป">＋</button></div>
+      <div class="smart-month-grid">${THAI_MONTHS.map((m,i)=>{const v=s.year+"-"+String(i+1).padStart(2,"0");return `<button class="${selected===v?'active':''}" onclick="chooseSmartMonth(${i+1})">${m}</button>`;}).join("")}</div>
+      <div class="smart-date-foot"><button onclick="setSmartDateValue('')">ล้างค่า</button><button onclick="setSmartDateValue(currentMonthKey())">เดือนนี้</button></div>`;
+  }else{
+    const first=new Date(s.year,s.month-1,1), days=new Date(s.year,s.month,0).getDate(), blanks=first.getDay();
+    const cells=Array.from({length:blanks},()=>'<button class="muted" disabled></button>').concat(Array.from({length:days},(_,i)=>{const d=i+1,v=s.year+"-"+String(s.month).padStart(2,"0")+"-"+String(d).padStart(2,"0");return `<button class="${selected===v?'active':''}" onclick="chooseSmartDay(${d})">${d}</button>`;}));
+    p.innerHTML=`<div class="smart-year-row"><button class="smart-year-step" onclick="shiftSmartYear(-1)" aria-label="ปีก่อน">−</button><div class="smart-year-value">ปี ${s.year}</div><button class="smart-year-step" onclick="shiftSmartYear(1)" aria-label="ปีถัดไป">＋</button></div>
+      <div class="smart-date-head"><button onclick="shiftSmartMonth(-1)" aria-label="เดือนก่อน">‹</button><div class="smart-date-title">${THAI_MONTHS[s.month-1]}</div><button onclick="shiftSmartMonth(1)" aria-label="เดือนถัดไป">›</button></div>
+      <div class="smart-week"><span>อา</span><span>จ</span><span>อ</span><span>พ</span><span>พฤ</span><span>ศ</span><span>ส</span></div><div class="smart-day-grid">${cells.join("")}</div>
+      <div class="smart-date-foot"><button onclick="setSmartDateValue('')">ล้างค่า</button><button onclick="setSmartDateValue(todayStr())">วันนี้</button></div>`;
+  }
+  positionSmartDate();
+}
 function systemYearRange(){
   const cy=currentYear(), out=[];
   for(let y=cy-10;y<=cy+15;y++) out.push(y);
@@ -772,7 +885,7 @@ function setCloudStatus(state){
 // ---------- Global UI state ----------
 let ui = { role:"sales", currentSales:"s1", currentHotelTab:"group", salesHotel:null, today:null, year:null, ownerTab:"group", ownerYear:null, ownerYearB:null,
            finHotel:null, finYear:null,
-           salesMonth:null, salesForecastStart:null, activityDays:30, targetYear:null,
+           salesMonth:null, salesFrom:null, salesTo:null, salesForecastStart:null, activityDays:30, activityFrom:null, activityTo:null, targetYear:null,
            feedbackYear:null, feedbackFrom:null, feedbackTo:null, feedbackHotel:"all", feedbackStatus:"all",
            page:null, reportRep:"all", reportFrom:null, reportTo:null, reportEmail:"",
            boardYear:null, boardProvince:"all", boardHotel:"all" };
@@ -951,6 +1064,7 @@ function repHotels(sid){
 // ============================================================
 function render(){
   const app = document.getElementById("app");
+  closeSmartDate();
   document.body.classList.toggle("readonly", readOnly());
   guardHotelScope();
   const mainView = ui.page==="salesReport" ? renderSalesReport()
@@ -970,6 +1084,7 @@ function render(){
       ${mainView}
     </div>
     <div id="modalRoot"></div>`;
+  enhanceDateInputs(app);
   if (window.__chartRefs){ Object.values(window.__chartRefs).forEach(c=>c&&c.destroy&&c.destroy()); }
   window.__chartRefs = {};
   if (ui.page==="salesReport"){
@@ -1117,16 +1232,21 @@ function renderSalesView(){
   if(isSales() && ui.currentSales!==sid) ui.currentSales=sid;
   const rep = salesById(sid);
   const mk = ui.salesMonth || currentMonthKey();
-  ui.salesMonth = mk;
+  const salesFrom = ui.salesFrom || firstDayOfMonthKey(mk);
+  const salesTo = ui.salesTo || lastDayOfMonthKey(mk);
+  ui.salesMonth = mk; ui.salesFrom=salesFrom; ui.salesTo=salesTo;
   const activityDays = Math.max(1,Math.min(365,Number(ui.activityDays)||30));
-  const activityFrom = addDaysStr(todayStr(),-(activityDays-1));
+  const activityFrom = ui.activityFrom || addDaysStr(todayStr(),-(activityDays-1));
+  const activityTo = ui.activityTo || todayStr();
+  ui.activityFrom=activityFrom; ui.activityTo=activityTo;
   const allPipeline = pipelineForSales(sid);
   const allFunctions = functionsForSales(sid);
-  const openPipeline = allPipeline.filter(p=>p.stage!=="won" && p.stage!=="lost" && ymKey(p.serviceStartDate||p.expectedCloseDate)===mk);
-  const myFunctions = allFunctions.filter(f=>f.status!=="completed" && f.status!=="cancelled" && ymKey(f.eventDate)===mk);
+  const openPipeline = allPipeline.filter(p=>p.stage!=="won" && p.stage!=="lost" && rangesOverlap(p.serviceStartDate||p.expectedCloseDate,p.serviceEndDate||p.serviceStartDate||p.expectedCloseDate,salesFrom,salesTo));
+  const myFunctions = allFunctions.filter(f=>f.status!=="completed" && f.status!=="cancelled" && rangesOverlap(f.eventDate,f.eventEndDate||f.eventDate,salesFrom,salesTo));
   const myAccounts = accountsForSales(sid);
-  const myActivities = activitiesForSales(sid).filter(a=>a.date>=activityFrom && a.date<=todayStr());
-  const myOnHand = onHandForSalesMonth(sid, mk);
+  const myActivities = activitiesForSales(sid).filter(a=>dateInRange(a.date,activityFrom,activityTo));
+  const myOnHand = sumVal(allPipeline.filter(p=>p.stage==="won"&&dateInRange(p.serviceStartDate||p.expectedCloseDate,salesFrom,salesTo)),"estValue")+
+    sumVal(allFunctions.filter(f=>ONHAND_FN_STATUS.includes(f.status)&&dateInRange(f.eventDate,salesFrom,salesTo)),"estRevenue");
 
   const overdue = myAccounts.filter(a=>daysDiff(a.lastContactDate)<=-14);
   const upcoming = allFunctions.filter(f=>daysDiff(f.eventDate)<=2 && daysDiff(f.eventDate)>=0 && f.status!=="beo_sent" && f.status!=="completed" && f.status!=="cancelled");
@@ -1150,7 +1270,7 @@ function renderSalesView(){
       </select>
       ${canManage() ? `<button onclick="openSalesModal('${sid}')" title="แก้ไข/ลบเซลล์คนนี้" class="btn btn-ghost text-xs px-2 py-1.5">✎</button>
       <button onclick="openSalesModal()" title="เพิ่มฝ่ายขายคนใหม่" class="btn btn-ghost text-xs px-2 py-1.5">＋ เพิ่มเซลล์</button>` : ""}
-      <span class="text-sm text-slate-400 ml-1">• เดือน ${monthLabel(mk)}</span>
+      <span class="text-sm text-slate-400 ml-1">• ช่วง ${shortDateLabel(salesFrom)} – ${shortDateLabel(salesTo)}</span>
       ${(!editable && !readOnly()) ? `<span class="text-xs px-2 py-1 rounded" style="background:#fef3c7;color:#92580a;" title="ดูข้อมูลของเซลล์คนอื่นได้ แต่แก้ไม่ได้">👁 กำลังดูของเซลล์คนอื่น (แก้ไม่ได้)</span>` : ""}
     </div>
   </div>
@@ -1176,7 +1296,7 @@ function renderSalesView(){
   </div>`:""}
 
   <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-    ${kpiCard("On Hand เดือนที่เลือก (ของฉัน)", fmtM(myOnHand), "ยอด Confirmed", G.onhand)}
+    ${kpiCard("On Hand ช่วงที่เลือก (ของฉัน)", fmtM(myOnHand), "ยอด Confirmed", G.onhand)}
     ${kpiCard("การขายที่กำลังติดตาม", fmtM(sumVal(openPipeline,"estValue")+sumVal(myFunctions.filter(f=>!ONHAND_FN_STATUS.includes(f.status)),"estRevenue")), `${openPipeline.length+myFunctions.length} รายการ`, G.pipeline)}
     ${kpiCard("งานหลายวัน / Function", myFunctions.length, "งานที่ยังไม่จบ", G.warn)}
     ${kpiCard("Account ในมือ", myAccounts.length, "ฐานลูกค้าที่รับผิดชอบ", G.account)}
@@ -1189,9 +1309,11 @@ function renderSalesView(){
         <div class="section-help">เก็บงานขาย B2B ไว้จุดเดียว แล้วเลือกหมวดเป็น <b>Corporate, Government, G-RO</b> (กรุ๊ปห้องพักแบบ Room Only) หรือ <b>Function</b> (จัดเลี้ยง/ประชุม/สัมมนา) ข้อมูล Confirmed จะนำไปเทียบ Target บนแดชบอร์ดอัตโนมัติ</div>
       </div>
       <div class="flex flex-wrap items-end gap-2">
-        <label class="text-xs text-slate-500">เดือนที่แสดง
-          <input type="month" value="${mk}" onchange="setSalesMonth(this.value)" class="block btn btn-ghost text-xs px-3 py-1.5 mt-1"/>
-        </label>
+        <div class="date-range-fields">
+          <label class="text-xs text-slate-500">แสดงตั้งแต่<input type="date" value="${salesFrom}" max="${salesTo}" onchange="setSalesDateFrom(this.value)" class="block mt-1"/></label>
+          <span class="date-range-sep">ถึง</span>
+          <label class="text-xs text-slate-500">ถึงวันที่<input type="date" value="${salesTo}" min="${salesFrom}" onchange="setSalesDateTo(this.value)" class="block mt-1"/></label>
+        </div>
         ${editable ? `<button onclick="openSaleModal()" class="section-action">＋ เพิ่มการขาย</button>` : ""}
       </div>
     </div>
@@ -1203,7 +1325,7 @@ function renderSalesView(){
       ${[
         ...allPipeline.map(p=>({kind:"group_ro",item:p,date:p.serviceStartDate||p.expectedCloseDate||""})),
         ...allFunctions.map(f=>({kind:"function",item:f,date:f.eventDate||""}))
-      ].filter(row=>ymKey(row.date)===mk).sort((a,b)=>(b.date||"").localeCompare(a.date||"")).map(row=>{
+      ].filter(row=>{const x=row.item,isFn=row.kind==="function";return rangesOverlap(isFn?x.eventDate:(x.serviceStartDate||x.expectedCloseDate),isFn?(x.eventEndDate||x.eventDate):(x.serviceEndDate||x.serviceStartDate||x.expectedCloseDate),salesFrom,salesTo);}).sort((a,b)=>(b.date||"").localeCompare(a.date||"")).map(row=>{
         const x=row.item, isFnRecord=row.kind==="function", isFn=isFnRecord||x.dealType==="function", name=isFnRecord?x.clientName:x.accountName;
         const category=saleCategoryOf(x,row.kind);
         const start=isFnRecord?x.eventDate:x.serviceStartDate, end=isFnRecord?x.eventEndDate:x.serviceEndDate;
@@ -1247,9 +1369,11 @@ function renderSalesView(){
         <div class="section-help">บันทึกการโทร เข้าพบ ส่งใบเสนอราคา หรือติดตามลูกค้า เพิ่ม แก้ไข และลบได้จากส่วนนี้โดยตรง</div>
       </div>
       <div class="flex flex-wrap items-end gap-2">
-        <label class="text-xs text-slate-500">ย้อนหลัง
-          <span class="flex items-center gap-1 mt-1"><input type="number" min="1" max="365" value="${activityDays}" onchange="setActivityDays(this.value)" class="fc-input" style="width:82px;text-align:left"/> วัน</span>
-        </label>
+        <div class="date-range-fields">
+          <label class="text-xs text-slate-500">กิจกรรมตั้งแต่<input type="date" value="${activityFrom}" max="${activityTo}" onchange="setActivityDateFrom(this.value)" class="block mt-1"/></label>
+          <span class="date-range-sep">ถึง</span>
+          <label class="text-xs text-slate-500">ถึงวันที่<input type="date" value="${activityTo}" min="${activityFrom}" onchange="setActivityDateTo(this.value)" class="block mt-1"/></label>
+        </div>
         ${editable?`<button onclick="openActivityModal()" class="section-action">＋ เพิ่ม Activity</button>`:""}
       </div>
     </div>
@@ -2031,9 +2155,15 @@ function setSalesRep(id){
 }
 function setHotelTab(id){ ui.currentHotelTab=id; render(); }
 function setSalesHotel(id){ ui.salesHotel=id; render(); }
-function setSalesMonth(v){ ui.salesMonth=v||currentMonthKey(); render(); }
+function setSalesMonth(v){
+  const mk=v||currentMonthKey(); ui.salesMonth=mk; ui.salesFrom=firstDayOfMonthKey(mk); ui.salesTo=lastDayOfMonthKey(mk); render();
+}
+function setSalesDateFrom(v){ ui.salesFrom=v||firstDayOfMonthKey(currentMonthKey()); if(!ui.salesTo||ui.salesTo<ui.salesFrom)ui.salesTo=ui.salesFrom; ui.salesMonth=ui.salesFrom.slice(0,7); render(); }
+function setSalesDateTo(v){ ui.salesTo=v||todayStr(); if(!ui.salesFrom||ui.salesFrom>ui.salesTo)ui.salesFrom=ui.salesTo; render(); }
 function setSalesForecastStart(v){ ui.salesForecastStart=v||currentMonthKey(); render(); }
 function setActivityDays(v){ ui.activityDays=Math.max(1,Math.min(365,Number(v)||30)); render(); }
+function setActivityDateFrom(v){ ui.activityFrom=v||addDaysStr(todayStr(),-29); if(!ui.activityTo||ui.activityTo<ui.activityFrom)ui.activityTo=ui.activityFrom; render(); }
+function setActivityDateTo(v){ ui.activityTo=v||todayStr(); if(!ui.activityFrom||ui.activityFrom>ui.activityTo)ui.activityFrom=ui.activityTo; render(); }
 function setYear(y){ ui.year=Number(y); render(); }
 function setOwnerTab(id){ ui.ownerTab=id; render(); }
 function setOwnerYear(y){ ui.ownerYear=Number(y); if(ui.ownerYearB===ui.ownerYear) ui.ownerYearB=ui.ownerYear-1; render(); }
@@ -4882,6 +5012,10 @@ if (CLOUD && sb){
 startDateWatch();            // อัปเดตวันที่/แจ้งเตือนอัตโนมัติตามวันจริง
 // เมื่อผู้ใช้พิมพ์เสร็จ (เลิกโฟกัสช่องกรอก) แล้วมีอัปเดตจากทีมค้างอยู่ → รีเฟรชให้เห็นข้อมูลล่าสุด
 document.addEventListener("focusout", ()=>{ setTimeout(flushPendingRender, 150); });
+// ช่องวันที่ที่ถูกสร้างภายหลัง (เช่น Modal) ใช้ปฏิทินแบบกระชับเดียวกันอัตโนมัติ
+new MutationObserver(changes=>changes.forEach(c=>c.addedNodes.forEach(n=>{ if(n.nodeType===1) enhanceDateInputs(n); }))).observe(document.getElementById("app"),{childList:true,subtree:true});
+document.addEventListener("mousedown",e=>{ const p=document.getElementById("smartDatePop"); if(p&&smartDateState&&!p.contains(e.target)&&e.target!==smartDateState.button&&!smartDateState.button.contains(e.target)) closeSmartDate(); });
+window.addEventListener("resize",positionSmartDate);
 </script>
 </body>
 </html>
