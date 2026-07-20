@@ -1153,7 +1153,7 @@ function renderTopBar(){
         ${notifBellHtml()}
         ${CLOUD ? roleBadgeHtml() : ""}
         ${CLOUD ? `<span id="cloudStatus" class="text-xs" style="color:#a7f3d0;">●</span>` : `<span class="text-xs" style="color:#fde68a;" title="กำลังใช้งานแบบออฟไลน์ในเครื่องนี้">ออฟไลน์</span>`}
-        <button onclick="showWeeklySummary()" title="สร้าง/ส่งสรุปยอดขายประจำสัปดาห์เข้า LINE" class="btn text-xs bg-white/20 hover:bg-white/30 text-white px-3 py-1.5">📤 สรุปสัปดาห์</button>
+        <button onclick="showWeeklySummary()" title="สร้าง/ส่งสรุปยอดขายเดือนปัจจุบันเข้า LINE" class="btn text-xs bg-white/20 hover:bg-white/30 text-white px-3 py-1.5">📤 สรุปรายเดือน</button>
         ${canManageUsers() ? `<button onclick="openUserManager()" title="เพิ่ม/แก้ไข/ลบผู้ใช้ และกำหนดสิทธิ์การใช้งาน (เฉพาะเจ้าของกิจการ)" class="btn text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-1.5">👤 จัดการผู้ใช้</button>` : ""}
         ${canManage() ? `<button onclick="exportData()" title="ดาวน์โหลดข้อมูลสำรองทั้งหมด (เฉพาะเจ้าของ)" class="btn text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-1.5">Export</button>
         <label class="ro-hide btn text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 cursor-pointer">Import
@@ -3111,42 +3111,23 @@ function deleteAppUser(id){
 }
 
 // ============================================================
-// WEEKLY SUMMARY — สรุปยอดขายประจำสัปดาห์ (ส่งเข้า LINE)
+// MONTHLY SUMMARY — สรุปยอดขายเฉพาะเดือนปัจจุบัน (ส่งเข้า LINE)
 // ============================================================
 function thaiFullDate(d){ return d.getDate()+" "+THAI_MONTHS[d.getMonth()]+" "+d.getFullYear(); }
 // สร้างข้อความสรุป (รูปแบบเดียวกับที่ Edge Function ส่งอัตโนมัติ)
 function buildWeeklySummary(){
-  const now = new Date();
-  const y = now.getFullYear(), py = y-1;
+  const now = new Date(todayStr()+"T12:00:00");
   const mk = currentMonthKey();
-  const monthsData = revMonthsWithData("group", y);
-  const ytd = revGroupYear(y);
-  const lastSame = revSumMonths("group", py, monthsData);
-  const yoy = pctChange(ytd, lastSame);
-  const arrow = (yoy===null||!isFinite(yoy)) ? "—" : (yoy>=0 ? "▲ "+yoy.toFixed(0)+"%" : "▼ "+Math.abs(yoy).toFixed(0)+"%");
   const monthRev = revGroupMonth(mk);
   const oh = groupOnHand(mk), fc = groupForecast(mk);
-  const target = targetFor(y), securedYr = groupOnHandYear(y);
-  const pctTarget = target ? Math.round(securedYr/target*100) : 0;
 
   let s = "";
-  s += "📊 สรุปยอดขายประจำสัปดาห์\n";
-  s += "Plaai Group • ณ " + thaiFullDate(now) + "\n\n";
-  s += "━━ ภาพรวมทั้งกลุ่ม ━━\n";
-  s += "💰 ยอดขายรวมปีนี้ (สะสม): " + fmtMoney(ytd) + "\n";
-  s += "   เทียบช่วงเดียวกันปีก่อน " + arrow + " (ปีก่อน " + fmtMoney(lastSame) + ")\n";
-  s += "📅 เดือนนี้ (" + monthLabel(mk) + ")\n";
-  s += "   • ยอดขายรวมทุกช่องทาง: " + fmtMoney(monthRev) + "\n";
-  s += "   • On Hand (Confirmed): " + fmtMoney(oh) + "\n";
-  s += "   • Forecast (Pipeline+Function): " + fmtMoney(fc) + "\n";
-  s += "🎯 เทียบเป้าทั้งปี: " + fmtMoney(securedYr) + " / " + fmtMoney(target) + " (" + pctTarget + "%)\n\n";
-  s += "━━ ช่องทาง (ปีนี้สะสม) ━━\n";
-  s += groupChannels(HOTELS).map(c=>c.label+" "+fmtMoney(revGroupYearChannel(y,c.key))).join("\n") + "\n\n";
-  s += "━━ รายโรงแรม (เดือนนี้) ━━\n";
-  HOTELS.forEach(h=>{
-    s += "• " + h.name + "\n";
-    s += "   ขาย " + fmtMoney(revHotelMonth(h.id,mk)) + " | OnHand " + fmtMoney(onHandForMonth(h.id,mk)) + " | FC " + fmtMoney(fcTotal(h.id,mk)) + "\n";
-  });
+  s += "📊 สรุปยอดขายประจำเดือน\n";
+  s += "Plaai Group • " + monthLabel(mk) + "\n";
+  s += "ข้อมูล ณ " + thaiFullDate(now) + "\n\n";
+  s += "💰 ยอดขายรวมเดือนนี้: " + fmtMoney(monthRev) + "\n";
+  s += "✅ On Hand (Confirmed): " + fmtMoney(oh) + "\n";
+  s += "📈 Forecast (Pipeline+Function): " + fmtMoney(fc) + "\n";
   s += "\n— ส่งจากระบบ Plaai Sales Ops";
   return s;
 }
@@ -3158,12 +3139,12 @@ function showWeeklySummary(){
   <div class="fixed inset-0 modal-backdrop flex items-center justify-center z-50" onclick="if(event.target===this) closeModal()">
     <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
       <div class="px-5 py-4 border-b flex justify-between items-center">
-        <div class="font-semibold text-lg text-slate-800">สรุปยอดขายประจำสัปดาห์</div>
+        <div class="font-semibold text-lg text-slate-800">สรุปยอดขายเดือนปัจจุบัน</div>
         <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700">✕</button>
       </div>
       <div class="px-5 py-4 space-y-3">
         <div class="text-xs text-slate-400">ตัวอย่างข้อความที่จะส่งเข้า LINE — คัดลอกไปวางเอง ดาวน์โหลด หรือกดส่งเข้ากลุ่มได้เลย</div>
-        <textarea id="weeklyText" readonly rows="16" class="w-full border border-slate-200 rounded-lg px-3 py-2" style="font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.5;white-space:pre;overflow:auto;">${esc}</textarea>
+        <textarea id="weeklyText" readonly rows="9" class="w-full border border-slate-200 rounded-lg px-3 py-2" style="font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.5;white-space:pre;overflow:auto;">${esc}</textarea>
         <div id="weeklyMsg" class="text-xs min-h-[16px]"></div>
         <div class="flex flex-wrap justify-end gap-2 pt-1">
           <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm rounded-lg border">ปิด</button>
@@ -3187,7 +3168,7 @@ function downloadWeekly(){
   const blob = new Blob([t.value], { type:"text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href=url; a.download="plaai_weekly_"+realToday()+".txt"; a.click(); URL.revokeObjectURL(url);
+  a.href=url; a.download="plaai_monthly_"+currentMonthKey()+".txt"; a.click(); URL.revokeObjectURL(url);
 }
 async function sendWeeklyToLine(btn){
   const msg = document.getElementById("weeklyMsg");
@@ -3198,7 +3179,7 @@ async function sendWeeklyToLine(btn){
     const res = await fetch(LINE_SUMMARY_FUNCTION_URL, {
       method:"POST",
       headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+(session?session.access_token:SUPABASE_ANON_KEY) },
-      body: JSON.stringify({ mode:"send" })
+      body: JSON.stringify({ mode:"send", summaryType:"monthly", month:currentMonthKey(), text:(document.getElementById("weeklyText")||{}).value||buildWeeklySummary() })
     });
     if(!res.ok) throw new Error("HTTP "+res.status+" "+(await res.text()));
     if(msg){ msg.textContent="ส่งเข้า LINE เรียบร้อย ✓"; msg.style.color="#0f766e"; }
