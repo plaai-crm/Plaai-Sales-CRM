@@ -435,9 +435,15 @@ function daysDiff(dateStr){ const d=new Date(dateStr), t=new Date(todayStr()); r
 function addDaysStr(dateStr,n){ if(!dateStr) return ""; const d=new Date(dateStr); d.setDate(d.getDate()+(Number(n)||0)); return d.toISOString().slice(0,10); }
 function ymKey(dateStr){ return (dateStr||"").slice(0,7); }
 function currentMonthKey(){ return todayStr().slice(0,7); }
+function currentYear(){ return Number(todayStr().slice(0,4))||new Date().getFullYear(); }
 function addMonthsKey(key,n){ let [y,m]=key.split("-").map(Number); m+=n; while(m>12){m-=12;y+=1;} while(m<1){m+=12;y-=1;} return y+"-"+String(m).padStart(2,"0"); }
 function monthLabel(key){ const [y,m]=key.split("-").map(Number); return THAI_MONTHS[m-1]+" "+y; }
 function next6Months(startKey){ const arr=[]; let k=startKey||currentMonthKey(); for(let i=0;i<6;i++){ arr.push(k); k=addMonthsKey(k,1);} return arr; }
+function systemYearRange(){
+  const cy=currentYear(), out=[];
+  for(let y=cy-10;y<=cy+15;y++) out.push(y);
+  return out;
+}
 
 // สร้างข้อมูลยอดขายตัวอย่าง (ปีนี้ถึงเดือนปัจจุบัน + ทั้งปีที่แล้ว) เพื่อให้หน้าเจ้าของมีกราฟให้ดูทันที
 function genSampleRevenue(hotels, cy){
@@ -603,10 +609,8 @@ function normalizeData(){
     if(!e.year && e.startDate) e.year = Number(e.startDate.slice(0,4))||null;
   });
   db.opportunities = (db.opportunities||[]).map(x=>({ value:0, stage:"lead", actionPlan:"", ...x }));
-  const cy = new Date().getFullYear();
-  db.years = (db.years && db.years.length) ? db.years : [cy];
-  if(!db.years.includes(cy)) db.years.push(cy);
-  db.years = db.years.map(Number).sort((a,b)=>a-b);
+  const cy = currentYear();
+  db.years = [...new Set([...(db.years||[]),...systemYearRange(),cy])].map(Number).sort((a,b)=>a-b);
   db.targets = db.targets || {};
   db.hotelTargets = db.hotelTargets || {};   // { hotelId: { year: number } } — เป้ารายโรงแรม
   db.salesTargets = db.salesTargets || {};   // { hotelId: { year: { corporate,government,gro,function,newAccounts,activeOldPct } } }
@@ -769,7 +773,7 @@ function setCloudStatus(state){
 let ui = { role:"sales", currentSales:"s1", currentHotelTab:"group", salesHotel:null, today:null, year:null, ownerTab:"group", ownerYear:null, ownerYearB:null,
            finHotel:null, finYear:null,
            salesMonth:null, salesForecastStart:null, activityDays:30, targetYear:null,
-           feedbackYear:null, feedbackHotel:"all", feedbackStatus:"all",
+           feedbackYear:null, feedbackFrom:null, feedbackTo:null, feedbackHotel:"all", feedbackStatus:"all",
            page:null, reportRep:"all", reportFrom:null, reportTo:null, reportEmail:"",
            boardYear:null, boardProvince:"all", boardHotel:"all" };
 
@@ -1409,7 +1413,7 @@ function renderGMView(){
 
 // ---------- GROUP (consolidated, vs 200M target) ----------
 function renderGroupDashboard(){
-  if(!ui.year) ui.year = new Date().getFullYear();
+  if(!ui.year) ui.year = currentYear();
   const yr = ui.year;
   const mk = currentMonthKey();
   const ohMonth = groupOnHand(mk);
@@ -1589,7 +1593,7 @@ function renderHotelDashboard(hid,hotel){
         : kpiCard("Function", "ไม่มีบริการ", "โรงแรมนี้ไม่รับงาน Function", G.neutral)}
   </div>
 
-  ${(function(){ const yrH=ui.year||new Date().getFullYear(); const hT=hotelTargetFor(hid,yrH); const hS=yearMonths(yrH).reduce((s,k)=>s+onHandForMonth(hid,k),0); const pc=hT?Math.min(100,hS/hT*100):0; return `
+  ${(function(){ const yrH=ui.year||currentYear(); const hT=hotelTargetFor(hid,yrH); const hS=yearMonths(yrH).reduce((s,k)=>s+onHandForMonth(hid,k),0); const pc=hT?Math.min(100,hS/hT*100):0; return `
   <div class="card p-5 mb-6">
     <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
       <div class="section-title">เป้าทั้งปี ${yrH} — ${hotel.name}</div>
@@ -1598,7 +1602,7 @@ function renderHotelDashboard(hid,hotel){
     <div class="text-sm mt-2 text-slate-600">Confirmed (On Hand) <b>${fmtMoney(hS)}</b> / เป้า ${fmtMoney(hT)} · <b>${Math.round(pc)}%</b></div>
   </div>`; })()}
 
-  ${renderSalesPerformance(hid,ui.year||new Date().getFullYear(),"Performance ฝ่ายขาย B2B — "+hotel.name)}
+  ${renderSalesPerformance(hid,ui.year||currentYear(),"Performance ฝ่ายขาย B2B — "+hotel.name)}
 
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
     <div class="card p-4 lg:col-span-1">
@@ -1704,7 +1708,7 @@ function ownerKpiSub(pct, note){
   return `<span style="color:${col};font-weight:800">${up?'▲':'▼'} ${Math.abs(pct).toFixed(0)}%</span> ${note||"เทียบปีก่อน"}`;
 }
 function renderOwnerView(){
-  if(!ui.ownerYear) ui.ownerYear = new Date().getFullYear();
+  if(!ui.ownerYear) ui.ownerYear = currentYear();
   if(ui.ownerYearB===null || ui.ownerYearB===undefined) ui.ownerYearB = ui.ownerYear-1;
   let scope = ui.ownerTab;
   if(scope!=="group" && !hotelById(scope)){ ui.ownerTab="group"; scope="group"; }
@@ -1844,7 +1848,7 @@ function renderOwnerView(){
 // ============================================================
 function renderFinanceView(){
   if(!ui.finHotel || !hotelById(ui.finHotel)) ui.finHotel = (visibleHotels()[0]||HOTELS[0]).id;
-  if(!ui.finYear) ui.finYear = new Date().getFullYear();
+  if(!ui.finYear) ui.finYear = currentYear();
   const hid = ui.finHotel, y = ui.finYear;
   const groups = customerGroups();
   const editable = canEditRevenue();
@@ -2055,10 +2059,10 @@ function setToday(v){ ui.today = v || null; render(); }
 // ============================================================
 function openHotelTargets(){
   if(!guardTargets()) return;
-  if(!ui.targetYear) ui.targetYear=new Date().getFullYear();
+  if(!ui.targetYear) ui.targetYear=currentYear();
   ui.page="hotelTargets"; render();
 }
-function setTargetYear(v){ ui.targetYear=Number(v)||new Date().getFullYear(); render(); }
+function setTargetYear(v){ ui.targetYear=Number(v)||currentYear(); render(); }
 function closeHotelTargets(){ ui.page=null; ui.role=isFinance()?"finance":"sales"; render(); }
 function addTargetYear(){
   if(!guardTargets()) return;
@@ -2080,7 +2084,7 @@ function updateTargetPageTotal(){
 }
 function saveHotelTargets(){
   if(!guardTargets()) return;
-  const y=Number(ui.targetYear)||new Date().getFullYear();
+  const y=Number(ui.targetYear)||currentYear();
   db.hotelTargets=db.hotelTargets||{}; db.salesTargets=db.salesTargets||{}; let total=0;
   HOTELS.forEach(h=>{
     const v=Number(val("ptg_"+h.id))||0;
@@ -2099,7 +2103,7 @@ function saveHotelTargets(){
 }
 function renderHotelTargetsView(){
   if(!canEditTargets()) return `<div class="card p-6 text-rose-600">บัญชีนี้ไม่มีสิทธิ์จัดการ Target รายตึก</div>`;
-  const y=Number(ui.targetYear)||new Date().getFullYear(); ui.targetYear=y;
+  const y=Number(ui.targetYear)||currentYear(); ui.targetYear=y;
   const years=Array.from(new Set([...(db.years||[]),y])).sort((a,b)=>a-b);
   return `
   <div class="flex flex-wrap items-start justify-between gap-3 mb-5">
@@ -2203,12 +2207,16 @@ function feedbackFileGallery(row){
 }
 function openFeedbackCenter(){
   if(!guardFeedback()) return;
-  if(!ui.feedbackYear) ui.feedbackYear=new Date().getFullYear();
+  const mk=currentMonthKey();
+  if(!ui.feedbackFrom) ui.feedbackFrom=mk;
+  if(!ui.feedbackTo) ui.feedbackTo=mk;
   ui.page="feedbackCenter"; render();
 }
 function closeFeedbackCenter(){ ui.page=null; render(); }
 function setFeedbackFilter(part,value){
-  if(part==="year") ui.feedbackYear=Number(value)||new Date().getFullYear();
+  if(part==="year"&&value){ const y=Number(value)||currentYear(); ui.feedbackYear=y; ui.feedbackFrom=y+"-01"; ui.feedbackTo=y+"-12"; }
+  if(part==="from"){ ui.feedbackFrom=value; ui.feedbackYear=null; }
+  if(part==="to"){ ui.feedbackTo=value; ui.feedbackYear=null; }
   if(part==="hotel") ui.feedbackHotel=value;
   if(part==="status") ui.feedbackStatus=value;
   render();
@@ -2216,10 +2224,14 @@ function setFeedbackFilter(part,value){
 function renderFeedbackCenter(){
   if(!canViewFeedback()) return `<div class="card p-8 text-center text-rose-600">บัญชีนี้ไม่มีสิทธิ์เข้าถึงหน้า Feedback งาน</div>`;
   const all=feedbackRows();
-  const y=Number(ui.feedbackYear)||new Date().getFullYear(); ui.feedbackYear=y;
-  const years=[...new Set([...(db.years||[]),...all.map(r=>Number((r.date||"").slice(0,4))).filter(Boolean),y])].sort((a,b)=>b-a);
+  const cy=currentYear();
+  let fromKey=ui.feedbackFrom||currentMonthKey(), toKey=ui.feedbackTo||currentMonthKey();
+  if(fromKey>toKey){ const tmp=fromKey; fromKey=toKey; toKey=tmp; }
+  ui.feedbackFrom=fromKey; ui.feedbackTo=toKey;
+  const presetYear=fromKey.slice(5)==="01"&&toKey.slice(5)==="12"&&fromKey.slice(0,4)===toKey.slice(0,4)?Number(fromKey.slice(0,4)):null;
+  const years=[...new Set([...(db.years||[]),...systemYearRange(),...all.map(r=>Number((r.date||"").slice(0,4))).filter(Boolean)])].sort((a,b)=>b-a);
   const hotel=ui.feedbackHotel||"all", status=ui.feedbackStatus||"all";
-  const rows=all.filter(r=>(!r.date||Number(r.date.slice(0,4))===y) && (hotel==="all"||r.item.hotelId===hotel) &&
+  const rows=all.filter(r=>ymKey(r.date)>=fromKey && ymKey(r.date)<=toKey && (hotel==="all"||r.item.hotelId===hotel) &&
     (status==="all"||(status==="closed"&&r.item.workClosed)||(status==="missing"&&r.item.workClosed&&!(r.item.feedbackFiles||[]).length&&!r.item.customerFeedback)));
   const closed=rows.filter(r=>r.item.workClosed).length;
   const withCustomer=rows.filter(r=>(r.item.feedbackFiles||[]).length||r.item.customerFeedback||Number(r.item.feedbackRating)>0).length;
@@ -2232,12 +2244,16 @@ function renderFeedbackCenter(){
     <button onclick="closeFeedbackCenter()" class="btn btn-ghost text-sm px-3 py-2">← กลับ</button>
   </div>
   <div class="card p-4 mb-5 flex flex-wrap items-end gap-3">
-    <label class="text-xs text-slate-500">ปี<select onchange="setFeedbackFilter('year',this.value)" class="block btn btn-ghost text-sm px-3 py-2 mt-1">${years.map(yy=>`<option value="${yy}" ${yy===y?"selected":""}>ปี ${yy}</option>`).join("")}</select></label>
+    <label class="text-xs text-slate-500">เลือกดูทั้งปี<select onchange="setFeedbackFilter('year',this.value)" class="block btn btn-ghost text-sm px-3 py-2 mt-1">
+      ${presetYear?"" : `<option value="" selected>ช่วงที่กำหนดเอง</option>`}
+      ${years.map(yy=>`<option value="${yy}" ${yy===presetYear?"selected":""}>ปี ${yy}</option>`).join("")}</select></label>
+    <label class="text-xs text-slate-500">ตั้งแต่เดือน<input type="month" value="${fromKey}" onchange="setFeedbackFilter('from',this.value)" class="block btn btn-ghost text-sm px-3 py-2 mt-1"/></label>
+    <label class="text-xs text-slate-500">ถึงเดือน<input type="month" value="${toKey}" onchange="setFeedbackFilter('to',this.value)" class="block btn btn-ghost text-sm px-3 py-2 mt-1"/></label>
     <label class="text-xs text-slate-500">โรงแรม<select onchange="setFeedbackFilter('hotel',this.value)" class="block btn btn-ghost text-sm px-3 py-2 mt-1"><option value="all">ทุกโรงแรม</option>${visibleHotels().map(h=>`<option value="${h.id}" ${hotel===h.id?"selected":""}>${escHtml(h.name)}</option>`).join("")}</select></label>
     <label class="text-xs text-slate-500">สถานะ<select onchange="setFeedbackFilter('status',this.value)" class="block btn btn-ghost text-sm px-3 py-2 mt-1"><option value="all">ทั้งหมด</option><option value="closed" ${status==="closed"?"selected":""}>ปิดงานแล้ว</option><option value="missing" ${status==="missing"?"selected":""}>ปิดแล้ว แต่ยังไม่มี Feedback ลูกค้า</option></select></label>
   </div>
   <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-    ${kpiCard("งานที่ปิดแล้ว",closed,"รายการในปีที่เลือก",G.onhand)}
+    ${kpiCard("งานที่ปิดแล้ว",closed,monthLabel(fromKey)+" ถึง "+monthLabel(toKey),G.onhand)}
     ${kpiCard("มี Feedback ลูกค้า",withCustomer,"มีไฟล์ คะแนน หรือความคิดเห็น",G.account)}
     ${kpiCard("ฝ่ายขายแจ้งปัญหา/ข้อเสนอ",withSalesIssue,"เสียงจากทีมขาย",G.warn)}
     ${kpiCard("คะแนนลูกค้าเฉลี่ย",ratings.length?avg.toFixed(1)+" / 5":"—",ratings.length+" งานที่มีคะแนน",G.pipeline)}
@@ -2370,8 +2386,8 @@ function openSaleModal(kind,id){
   const saleType=ex?saleCategoryOf(ex,kind):"corporate";
   const customerType=(ex&&ex.customerType)||"corporate";
   const stage=ex?saleStage(ex,kind):"lead";
-  const start=ex?(isFn?ex.eventDate:ex.serviceStartDate):"";
-  const end=ex?(isFn?ex.eventEndDate:ex.serviceEndDate):"";
+  const start=ex?(isFn?ex.eventDate:ex.serviceStartDate):todayStr();
+  const end=ex?(isFn?ex.eventEndDate:ex.serviceEndDate):todayStr();
   const name=ex?(isFn?ex.clientName:ex.accountName):"";
   const value=ex?(isFn?ex.estRevenue:ex.estValue):"";
   const body=`
@@ -2396,13 +2412,13 @@ function openSaleModal(kind,id){
     <label class="block text-sm">มูลค่าประเมิน (บาท)<input type="number" min="0" id="f_value" value="${value}" class="${inputCls}"/></label>
     <label class="block text-sm">Stage<select id="f_stage" class="${inputCls}" onchange="toggleSaleFields()">${Object.entries(PIPELINE_STAGES).map(([k,v])=>`<option value="${k}" ${stage===k?"selected":""}>${v}</option>`).join("")}</select></label>
     <div id="f_sale_lost_wrap" class="${stage==="lost"?"":"hidden"}"><label class="block text-sm">เหตุผลที่ Lost<textarea id="f_lostreason" class="${inputCls}" rows="2" placeholder="เช่น ราคาไม่ตรงงบ / เลือกคู่แข่ง / ยกเลิกงาน">${ex?escHtml(ex.lostReason||""):""}</textarea></label></div>
-    <label class="block text-sm">คาดว่าจะปิดวันที่<input type="date" id="f_close" value="${ex?(ex.expectedCloseDate||""):""}" class="${inputCls}"/></label>
+    <label class="block text-sm">คาดว่าจะปิดวันที่<input type="date" id="f_close" value="${ex?(ex.expectedCloseDate||todayStr()):todayStr()}" class="${inputCls}"/></label>
     <div class="rounded-xl border border-teal-100 bg-teal-50 p-3 space-y-3">
       <label class="flex items-start gap-2 text-sm font-semibold text-teal-900 cursor-pointer">
         <input type="checkbox" id="f_work_closed" ${ex&&ex.workClosed?"checked":""} onchange="toggleWorkClosed()" class="mt-1 w-4 h-4 accent-teal-700"/>
         <span>ปิดงานเรียบร้อยแล้ว<span class="block text-xs font-normal text-teal-700">ระบบจะเปลี่ยน Stage เป็น Confirmed และเก็บรายการไว้ในหน้า “Feedback งาน”</span></span>
       </label>
-      <div id="f_closed_wrap" class="${ex&&ex.workClosed?"":"hidden"}"><label class="block text-sm">วันที่ปิดงาน<input type="date" id="f_closed_date" value="${ex?ex.closedDate||"":""}" class="${inputCls}"/></label></div>
+      <div id="f_closed_wrap" class="${ex&&ex.workClosed?"":"hidden"}"><label class="block text-sm">วันที่ปิดงาน<input type="date" id="f_closed_date" value="${ex?ex.closedDate||todayStr():todayStr()}" class="${inputCls}"/></label></div>
     </div>
     <div class="rounded-xl border border-slate-200 p-3 space-y-3">
       <div class="font-semibold text-slate-700">Feedback หลังใช้บริการ</div>
@@ -2540,7 +2556,7 @@ function openPipelineModal(id,presetHotelId){
     <label class="block text-sm">มูลค่าประเมิน (บาท)<input type="number" id="f_value" value="${ex?ex.estValue:''}" class="${inputCls}"/></label>
     <label class="block text-sm">Stage<select id="f_stage" class="${inputCls}" onchange="togglePlLost(this.value)">${Object.entries(PIPELINE_STAGES).map(([k,v])=>`<option value="${k}" ${ex&&ex.stage===k?'selected':''}>${v}</option>`).join("")}</select></label>
     <div id="f_lostwrap" class="${ex&&ex.stage==='lost'?'':'hidden'}"><label class="block text-sm">เหตุผลที่ Lost (กรอกเมื่อเสียลูกค้าไป — บริษัทจะได้ปรับปรุงถูกจุด)<textarea id="f_lostreason" class="${inputCls}" rows="2" placeholder="เช่น แพ้เรื่องราคา / คู่แข่งมีโปรโมชัน / ลูกค้าเลื่อนงาน">${ex?escAttr(ex.lostReason||""):""}</textarea></label></div>
-    <label class="block text-sm">คาดว่าจะปิดวันที่<input type="date" id="f_close" value="${ex?ex.expectedCloseDate:''}" class="${inputCls}"/></label>
+    <label class="block text-sm">คาดว่าจะปิดวันที่<input type="date" id="f_close" value="${ex?ex.expectedCloseDate:todayStr()}" class="${inputCls}"/></label>
     <input type="hidden" id="f_id" value="${ex?ex.id:''}"/>`;
   const footer = ex ? `<button type="button" onclick="deletePipeline('${ex.id}'); closeModal();" class="text-rose-500 text-xs">ลบรายการนี้</button>` : "";
   document.getElementById("modalRoot").innerHTML = modalShell(ex?"แก้ไข Pipeline Deal":"เพิ่ม Pipeline Deal", body, "submitPipeline", footer);
@@ -2569,7 +2585,7 @@ function openFunctionModal(id,presetHotelId){
     <label class="block text-sm">เซลล์ผู้ดูแล${salesSelectHtml(ex?ex.salesId:ui.currentSales)}</label>
     <label class="block text-sm">ชื่อลูกค้า/งาน<input id="f_client" value="${escAttr(ex?ex.clientName:"")}" class="${inputCls}"/></label>
     <label class="block text-sm">ประเภทงาน<input id="f_eventtype" value="${escAttr(ex?ex.eventType:"")}" class="${inputCls}" placeholder="เช่น สัมมนา, งานเลี้ยง"/></label>
-    <label class="block text-sm">วันจัดงาน<input type="date" id="f_eventdate" value="${ex?ex.eventDate:''}" class="${inputCls}"/></label>
+    <label class="block text-sm">วันจัดงาน<input type="date" id="f_eventdate" value="${ex?ex.eventDate:todayStr()}" class="${inputCls}"/></label>
     <label class="block text-sm">จำนวนคน (Pax)<input type="number" id="f_pax" value="${ex?ex.paxCount:''}" class="${inputCls}"/></label>
     <label class="block text-sm">มูลค่าประเมิน (บาท)<input type="number" id="f_revenue" value="${ex?ex.estRevenue:''}" class="${inputCls}"/></label>
     <label class="block text-sm">สถานะ<select id="f_status" class="${inputCls}">${Object.entries(FUNCTION_STATUS).map(([k,v])=>`<option value="${k}" ${ex&&ex.status===k?'selected':''}>${v}</option>`).join("")}</select></label>
@@ -3662,12 +3678,12 @@ function canEditPresentation(){ if(!CLOUD) return true; const r=userRole(); retu
 function guardPresentation(){ if(canEditPresentation()) return true; alert("เฉพาะเจ้าของกิจการหรือฝ่ายขายเท่านั้นที่แก้ไขข้อมูลส่วนนี้ได้"); return false; }
 
 function ensurePresDefaults(){
-  const cy=new Date().getFullYear();
+  const cy=currentYear(), cm=Number(currentMonthKey().slice(5,7))||1;
   if(!ui.presYear) ui.presYear=cy;
   if(ui.presCmpYear==null) ui.presCmpYear=ui.presYear-1;
-  if(!ui.presPeriod) ui.presPeriod="ytd";
-  if(!ui.presFromM) ui.presFromM=1;
-  if(!ui.presToM) ui.presToM=Number(currentMonthKey().slice(5,7))||12;
+  if(!ui.presPeriod) ui.presPeriod="range";
+  if(!ui.presFromM) ui.presFromM=cm;
+  if(!ui.presToM) ui.presToM=cm;
   if(!ui.presScope) ui.presScope="group";
   if(ui.presScope!=="group" && !canSeeHotel(ui.presScope)) ui.presScope="group";
 }
@@ -3684,7 +3700,7 @@ function presMonthsList(){
   if(ui.presPeriod==="full"){ const a=[]; for(let m=1;m<=12;m++)a.push(m); return a; }
   if(ui.presPeriod==="range"){ const a=Math.min(ui.presFromM,ui.presToM), b=Math.max(ui.presFromM,ui.presToM); const out=[]; for(let m=a;m<=b;m++) out.push(m); return out; }
   let ms=revMonthsWithData(scope,y);
-  if(!ms.length){ const cy=new Date().getFullYear(); const upto=(y===cy)?(Number(currentMonthKey().slice(5,7))||12):12; ms=[]; for(let m=1;m<=upto;m++) ms.push(m); }
+  if(!ms.length){ const cy=currentYear(); const upto=(y===cy)?(Number(currentMonthKey().slice(5,7))||12):12; ms=[]; for(let m=1;m<=upto;m++) ms.push(m); }
   return ms;
 }
 function presPeriodLabel(){
@@ -3992,7 +4008,7 @@ function submitNewCo(){ if(!guardPresentation())return; const id=val("f_id");
 function openLostModal(id){ if(!guardPresentation())return; const ex=id?db.lostBusiness.find(x=>x.id===id):null;
   const body=`<label class="block text-sm">โรงแรม<select id="f_hotel" class="${inputCls}">${presHotelOptions(ex?ex.hotelId:null)}</select></label>
     <label class="block text-sm">ชื่อบริษัท<input id="f_name" value="${escAttr(ex?ex.name:"")}" class="${inputCls}"/></label>
-    <label class="block text-sm">วันที่ติดต่อ/ใช้บริการล่าสุด<input type="date" id="f_last" value="${ex?ex.lastDate||"":""}" class="${inputCls}"/></label>
+    <label class="block text-sm">วันที่ติดต่อ/ใช้บริการล่าสุด<input type="date" id="f_last" value="${ex?ex.lastDate||todayStr():todayStr()}" class="${inputCls}"/></label>
     <label class="block text-sm">สาเหตุที่หายไป<textarea id="f_reason" class="${inputCls}" rows="2" placeholder="เช่น ย้ายไปคู่แข่ง / ราคา / บริการ">${ex?escAttr(ex.reason):""}</textarea></label>
     <label class="block text-sm">มูลค่าที่เสียไป/ปี (ถ้ามี)<input type="number" id="f_value" value="${ex?ex.value:0}" class="${inputCls}"/></label>
     <label class="block text-sm">หมายเหตุ<input id="f_note" value="${escAttr(ex?ex.note:"")}" class="${inputCls}"/></label>
@@ -4011,7 +4027,7 @@ function openEventModal(id){ if(!guardPresentation())return; const ex=id?db.even
     <label class="block text-sm">ชื่องาน/อีเวนต์<input id="f_name" value="${escAttr(ex?ex.name:"")}" class="${inputCls}"/></label>
     <label class="block text-sm">สถานที่จัด<input id="f_loc" value="${escAttr(ex?ex.location:"")}" class="${inputCls}" list="locList" placeholder="เช่น ระยอง, บ่อวิน"/>
       <datalist id="locList"><option value="ระยอง"><option value="บ่อวิน"><option value="สาโรช"><option value="พัทยา"><option value="ชลบุรี"><option value="อื่นๆ"></datalist></label>
-    <label class="block text-sm">วันที่เริ่มงาน<input type="date" id="f_start" value="${ex?ex.startDate||"":""}" class="${inputCls}"/></label>
+    <label class="block text-sm">วันที่เริ่มงาน<input type="date" id="f_start" value="${ex?ex.startDate||todayStr():todayStr()}" class="${inputCls}"/></label>
     <label class="block text-sm">จำนวนวัน<input type="number" min="1" id="f_days" value="${ex?ex.days||1:1}" class="${inputCls}"/></label>
     <label class="block text-sm">หมายเหตุ<input id="f_note" value="${escAttr(ex?ex.note:"")}" class="${inputCls}"/></label>
     <input type="hidden" id="f_id" value="${ex?ex.id:''}"/>`;
@@ -4193,7 +4209,7 @@ function eventHotels(x){ const s=new Set(eventHotelIds(x)); return HOTELS.filter
 function eventHasExplicitHotels(x){ return Array.isArray(x.hotelIds) && x.hotelIds.filter(id=>hotelById(id)).length>0; }
 
 function ensureBoardDefaults(){
-  const cy=new Date().getFullYear();
+  const cy=currentYear();
   if(!ui.boardYear) ui.boardYear=cy;
   if(!ui.boardProvince) ui.boardProvince="all";
   if(!ui.boardHotel) ui.boardHotel="all";
@@ -4222,7 +4238,7 @@ function boardProvinceOptions(){
     provs.map(p=>`<option value="${escAttr(p)}" ${ui.boardProvince===p?"selected":""}>${p}</option>`).join("");
 }
 function boardYearOptions(){
-  const cy=new Date().getFullYear();
+  const cy=currentYear();
   const yrs=new Set((db.years||[]).concat([cy-1,cy,cy+1]));
   (db.events||[]).forEach(x=>{ const y=Number(evStart(x).slice(0,4))||x.year; if(y) yrs.add(Number(y)); });
   return [...yrs].filter(Boolean).sort((a,b)=>a-b).map(y=>`<option value="${y}" ${Number(ui.boardYear)===y?"selected":""}>${y}</option>`).join("");
@@ -4487,8 +4503,8 @@ function openEventInfo(id){
       <div class="rounded-lg border p-2.5 flex flex-wrap" style="border-color:#e6ebf0;background:#f8fafc;">${hotelChecks}</div>
     </div>
     <div class="grid grid-cols-2 gap-2">
-      <label class="block text-sm">วันที่เริ่ม<input type="date" id="f_start" value="${ex?ex.startDate||"":""}" class="${inputCls}"/></label>
-      <label class="block text-sm">วันที่สิ้นสุด<input type="date" id="f_end" value="${ex?(ex.endDate||ex.startDate||""):""}" class="${inputCls}"/></label>
+      <label class="block text-sm">วันที่เริ่ม<input type="date" id="f_start" value="${ex?ex.startDate||todayStr():todayStr()}" class="${inputCls}"/></label>
+      <label class="block text-sm">วันที่สิ้นสุด<input type="date" id="f_end" value="${ex?(ex.endDate||ex.startDate||todayStr()):todayStr()}" class="${inputCls}"/></label>
     </div>
     <label class="block text-sm">ขนาดงาน / ผู้เข้าร่วมโดยประมาณ<input id="f_scale" value="${escAttr(ex?ex.scale:"")}" class="${inputCls}" placeholder="เช่น 5,000 คน / 20 บูธ"/></label>
     <label class="block text-sm">ผู้แจ้ง (ฝ่ายขาย)${salesSelectHtml(ex?ex.salesId:(mySalesId()||ui.currentSales))}</label>
@@ -4512,7 +4528,7 @@ function submitEventInfo(){
     startDate:start, endDate:end, location:val("f_venue").trim(),
     days:(start&&end)?(Math.round((new Date(end)-new Date(start))/86400000)+1):1,
     scale:val("f_scale").trim(), salesId:val("f_sales"), activityPlan:val("f_act"),
-    note:val("f_note").trim(), year:start?Number(start.slice(0,4)):new Date().getFullYear()
+    note:val("f_note").trim(), year:start?Number(start.slice(0,4)):currentYear()
   };
   if(!data.name){ alert("กรุณากรอกชื่องาน/อีเวนต์"); return; }
   if(id){ Object.assign(db.events.find(x=>x.id===id),data); }
