@@ -331,8 +331,7 @@ function isSalesAssistant(){ return userRole()==="sales_assistant"; }
 // รายชื่อ hotelId ที่ผู้ใช้คนนี้ "มีสิทธิ์เห็น" (ผู้จัดการโรงแรม = เฉพาะที่กำหนด · คนอื่น = ทุกโรงแรม)
 function allowedHotelIds(){
   if(CLOUD && isHM()){ const ids = hmHotelsFor(currentEmail())||[]; return ids.filter(id=>hotelById(id)); }
-  // เซลล์ (ไม่ใช่ผู้จัดการ/ผู้ช่วย) เห็นเฉพาะโรงแรมของตัวเองถ้ากำหนดไว้
-  if(CLOUD && isSales()){ const ids = salesHotelsFor(currentEmail()); if(ids && ids.length){ const f=ids.filter(id=>hotelById(id)); if(f.length) return f; } }
+  // นโยบาย: ทุกเซลล์เห็นได้ทุกโรงแรม (แต่แก้ได้เฉพาะข้อมูลที่ตัวเองกรอก — กันการกลั่นแกล้ง)
   return HOTELS.map(h=>h.id);
 }
 // โรงแรมที่แสดงในแท็บ/กราฟ (กรองตามสิทธิ์ผู้จัดการโรงแรม)
@@ -1115,6 +1114,10 @@ function revAcct(hid,key){ const e=revEntry(hid,key); return e?Number(e.acct)||0
 function revHotelMonth(hid,key){ const a=revAcct(hid,key); return a>0 ? a : revSplitSum(hid,key); }
 // ผลต่างการกระทบยอด: บวก = ยังไม่ได้แยกช่องทาง/รายได้อื่น(F&B) · ลบ = แยกเกินยอดบัญชี (ผิดปกติ)
 function revReconcile(hid,key){ const a=revAcct(hid,key); return a>0 ? (a - revSplitSum(hid,key)) : 0; }
+// ผู้กรอก "แยกช่องทาง" ของแถวนี้ (salesId) — คนแรกที่กรอก = เจ้าของแถว
+function revOwner(hid,key){ const e=revEntry(hid,key); return e?(e.enteredBy||""):""; }
+// เซลล์แก้แถวยอดแยกช่องทางได้เฉพาะแถวที่ตัวเองกรอก (กันกลั่นแกล้ง) · เจ้าของ/ฝ่ายบัญชีแก้ได้ทุกแถว
+function canEditRevenueCell(hid,key){ if(!CLOUD) return true; const r=userRole(); if(r==="owner"||r==="finance") return true; if(r==="sales"){ const o=revOwner(hid,key); return !o || o===mySalesId(); } return false; }
 function hotelRevenueYear(hid,year){ return yearMonths(year).reduce((s,k)=>s+revHotelMonth(hid,k),0); }
 
 // ---------- ANNUAL SALES TARGETS & PERFORMANCE ----------
@@ -2219,10 +2222,10 @@ function renderFinanceView(){
         <th class="text-right px-2">คงเหลือ/สถานะ</th>
       </tr></thead>
       <tbody>
-      ${THAI_MONTHS.map((mn,i)=>{ const mk=monthKey(y,i+1); const split=revSplitSum(hid,mk); const acc=revAcct(hid,mk);
+      ${THAI_MONTHS.map((mn,i)=>{ const mk=monthKey(y,i+1); const split=revSplitSum(hid,mk); const acc=revAcct(hid,mk); const rowEdit=canEditRevenueCell(hid,mk); const rOwn=revOwner(hid,mk);
         return `<tr class="border-b last:border-0">
-          <td class="py-1.5 pr-2 font-medium whitespace-nowrap">${mn} ${y}</td>
-          ${groups.map(c=>`<td class="text-right px-1"><input ${editable?"":"disabled"} type="number" min="0" class="fc-input" style="width:100px" value="${revChannel(hid,mk,c.key)||''}" placeholder="0" onchange="setRevCell('${hid}','${mk}','${c.key}',this.value)"></td>`).join("")}
+          <td class="py-1.5 pr-2 font-medium whitespace-nowrap">${mn} ${y}${rOwn?`<div class="text-[10px] text-slate-400">${rowEdit?"✎":"🔒"} ${escHtml(salesById(rOwn)?.name||rOwn)}</div>`:""}</td>
+          ${groups.map(c=>`<td class="text-right px-1"><input ${rowEdit?"":"disabled"} type="number" min="0" class="fc-input" style="width:100px" value="${revChannel(hid,mk,c.key)||''}" placeholder="0" onchange="setRevCell('${hid}','${mk}','${c.key}',this.value)"></td>`).join("")}
           <td class="text-right px-2 font-semibold" style="color:#0e7490">${fmtMoney(split)}</td>
           <td class="text-right px-2"><input ${canEditAcct()?"":"disabled"} type="number" min="0" class="fc-input" style="width:110px;font-weight:700;background:#f1f5f9" value="${acc||''}" placeholder="0" onchange="setRevAcct('${hid}','${mk}',this.value)" title="ยอดรวมจากบัญชี (GOR)"></td>
           <td class="text-right px-2 whitespace-nowrap">${reconChip(acc,split)}</td>
@@ -2247,12 +2250,13 @@ function renderFinanceView(){
 function setFinHotel(v){ ui.finHotel=v; render(); }
 function setFinYear(v){ ui.finYear=Number(v); render(); }
 function setRevCell(hid,mk,key,value){
-  if(!guardRevenue()){ render(); return; }
+  if(!canEditRevenueCell(hid,mk)){ alert("แถวเดือนนี้เซลล์ท่านอื่นเป็นผู้กรอก · แก้ไขได้เฉพาะผู้ที่กรอกเอง หรือเจ้าของ/ฝ่ายบัญชี"); render(); return; }
   const v = Number(value)||0;
   let e = revEntry(hid,mk);
   if(!e){ e={ id:uid("rev"), hotelId:hid, month:mk, vals:{} }; db.revenue.push(e); }
   if(!e.vals || typeof e.vals!=="object") e.vals={};
   if(v) e.vals[key]=v; else delete e.vals[key];
+  if(isSales() && !e.enteredBy) e.enteredBy = mySalesId();  // ผู้กรอกคนแรก = เจ้าของแถว
   saveData(); render();
 }
 function guardAcct(){ if(canEditAcct()) return true; alert("เฉพาะเจ้าของกิจการหรือฝ่ายบัญชีเท่านั้นที่แก้ 'ยอดรวมจากบัญชี (GOR)' ได้ · เซลล์กรอกได้เฉพาะการแยกช่องทาง"); return false; }
