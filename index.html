@@ -871,7 +871,7 @@ function cloudSyncChanges(){
 
 function rebuildDbFromRows(rows){
   const base = defaultData();
-  const out = { hotels:[], salesReps:[], accounts:[], pipeline:[], functionEvents:[], activities:[], forecasts:[], revenue:[], partners:[], newCompanies:[], lostBusiness:[], events:[], opportunities:[], appUsers:[], years:base.years, targets:{}, hotelTargets:{}, salesTargets:{} };
+  const out = { hotels:[], salesReps:[], accounts:[], pipeline:[], functionEvents:[], activities:[], forecasts:[], revenue:[], partners:[], newCompanies:[], lostBusiness:[], events:[], opportunities:[], appUsers:[], orders:[], quotations:[], years:base.years, targets:{}, hotelTargets:{}, salesTargets:{} };
   for(const r of rows){
     if(r.deleted) continue;
     if(r.collection==="meta"){ if(r.data){ out.years=r.data.years||out.years; out.targets=r.data.targets||{}; out.hotelTargets=r.data.hotelTargets||{}; out.salesTargets=r.data.salesTargets||{}; if(Array.isArray(r.data.customerGroups)&&r.data.customerGroups.length) out.customerGroups=r.data.customerGroups; } continue; }
