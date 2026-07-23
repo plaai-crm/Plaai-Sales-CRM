@@ -933,6 +933,10 @@ function normalizeData(){
   db.hotels.forEach(h=>{ h.channels = db.customerGroups; });
   // ---- คอลเลกชันสำหรับพรีเซนต์ประจำเดือน ----
   db.partners      = (db.partners||[]).map(x=>({ year:null, month:0, roomNights:0, revenue:0, ...x }));
+  // ย้ายข้อมูล Top Production อัตโนมัติ: ถ้ายังว่าง หรือมีแต่ข้อมูลตัวอย่างเก่า ให้โหลดข้อมูลจริงทุกตึกให้เลย
+  if(!db.partners.length || db.partners.every(p=>/ตัวอย่างพาร์ทเนอร์/.test(String(p.name||"")))){
+    try{ db.partners = realPartnerRows().map(x=>({ month:0, ...x })); }catch(e){}
+  }
   db.newCompanies  = (db.newCompanies||[]).map(x=>({ roomNights:0, revenue:0, note:"", salesId:"", ...x }));
   db.lostBusiness  = (db.lostBusiness||[]).map(x=>({ reason:"", value:0, note:"", lastDate:"", ...x }));
   // ---- Event ทั้งปี (ปฏิทินอีเวนต์ในโซน · ใช้ร่วมกันทุกโรงแรม) ----
@@ -2542,7 +2546,7 @@ function setTopSort(v){ ui.topSort=v; render(); }
 function setTopSearch(v){ ui.topSearch=v; render(); }
 function setTopView(v){ ui.topView=v; render(); }
 function setTopMonthYear(v){ ui.topMonthYear=Number(v)||currentYear(); render(); }
-function openTopProdData(){ if(!canEditPresentation()){ alert("เฉพาะฝ่ายขาย/เจ้าของกิจการเท่านั้นที่กรอกข้อมูลได้"); return; } ui.page="topProdData"; render(); }
+function openTopProdData(){ if(!canEditPresentation()){ alert("เฉพาะเจ้าของกิจการหรือฝ่ายบัญชีเท่านั้นที่กรอกข้อมูลได้"); return; } ui.page="topProdData"; render(); }
 function closeTopProdData(){ ui.page="topProduction"; render(); }
 function toggleTopYear(y){ y=Number(y); if(ui.topYears.includes(y)) ui.topYears=ui.topYears.filter(x=>x!==y); else ui.topYears=[...ui.topYears,y].sort((a,b)=>a-b); if(!ui.topYears.length) ui.topYears=[y]; render(); }
 function addTopYearPrompt(){ const s=prompt("เพิ่มปีที่ต้องการเปรียบเทียบ (ค.ศ. เช่น 2026):", String(currentYear())); if(s===null) return; const y=Number(s); if(!y||y<2000||y>2100){ alert("กรุณาใส่ปีเป็นตัวเลข ค.ศ. เช่น 2026"); return; } if(!ui.topYears.includes(y)) ui.topYears=[...ui.topYears,y].sort((a,b)=>a-b); render(); }
@@ -4554,7 +4558,7 @@ function importData(evt){
 // PRESENTATION VIEW — พรีเซนต์ประจำเดือนสำหรับผู้บริหาร (แยกรายโรงแรม)
 // ============================================================
 function canEditPresentation(){ if(!CLOUD) return true; const r=userRole(); return r==="owner"||r==="finance"; }
-function guardPresentation(){ if(canEditPresentation()) return true; alert("เฉพาะเจ้าของกิจการหรือฝ่ายขายเท่านั้นที่แก้ไขข้อมูลส่วนนี้ได้"); return false; }
+function guardPresentation(){ if(canEditPresentation()) return true; alert("เฉพาะเจ้าของกิจการหรือฝ่ายบัญชีเท่านั้นที่แก้ไขข้อมูลส่วนนี้ได้"); return false; }
 
 function ensurePresDefaults(){
   const cy=currentYear(), cm=Number(currentMonthKey().slice(5,7))||1;
@@ -4785,7 +4789,7 @@ function renderPresentView(){
 // ============================================================
 // หน้ากรอก/จัดการข้อมูลพรีเซนต์ (แยกจากหน้าพรีเซนต์ให้ชัด — เฉพาะคนมีสิทธิ์)
 // ============================================================
-function openPresData(){ if(!canEditPresentation()){ alert("เฉพาะฝ่ายขาย/เจ้าของกิจการเท่านั้นที่กรอกข้อมูลได้"); return; } ui.page="presData"; render(); }
+function openPresData(){ if(!canEditPresentation()){ alert("เฉพาะเจ้าของกิจการหรือฝ่ายบัญชีเท่านั้นที่กรอกข้อมูลได้"); return; } ui.page="presData"; render(); }
 function closePresData(){ ui.page=null; render(); }
 function renderPresData(){
   ensurePresDefaults();
