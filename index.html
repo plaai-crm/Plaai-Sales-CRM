@@ -233,6 +233,14 @@ const SALES_MANAGER_EMAILS = {
   "sales1.plaaihotel@p-plaai.com": "s1",
 };
 
+/* ผู้ช่วยฝ่ายขายประจำออฟฟิศ — ดูแลให้เซลล์ทุกคน
+   เข้าถึงเฉพาะ: หน้าฝ่ายขาย (ช่วยกรอกของทุกเซลล์) · งานจัดเลี้ยง/ออเดอร์ · ใบเสนอราคา
+   รับงาน/ส่งต่องานได้ · แต่แก้ Target / ตัวเลขรายได้ / จัดการผู้ใช้ ไม่ได้
+   วิธีใช้: ใส่อีเมลผู้ช่วยที่นี่ หรือกำหนด role "sales_assistant" ในหน้า "จัดการผู้ใช้" ก็ได้ */
+const SALES_ASSISTANT_EMAILS = [
+  // "assistant@p-plaai.com",
+];
+
 /* URL ของ Supabase Edge Function สำหรับส่งสรุปเข้า LINE (ดูคู่มือ LINE)
    - ถ้าใส่ไว้ ปุ่ม “ส่งเข้า LINE เลย” จะทำงานได้
    - ถ้าเว้นว่าง ยังใช้ปุ่มคัดลอก/ดาวน์โหลดข้อความสรุปได้ตามปกติ           */
@@ -291,6 +299,7 @@ function userRole(){
   const au = appUserFor(em);
   if(au && au.role) return au.role;
   if(FINANCE_EMAILS.map(e=>e.toLowerCase()).includes(em)) return "finance";
+  if(SALES_ASSISTANT_EMAILS.map(e=>e.toLowerCase()).includes(em)) return "sales_assistant";
   if(salesIdForEmail(em)) return "sales";
   if(hmHotelsFor(em)) return "hm";
   return "viewer";
@@ -300,6 +309,7 @@ function isSalesManager(){ return userRole()==="sales_manager"; }
 function isFinance(){ return userRole()==="finance"; }
 function isSales(){ return userRole()==="sales"; }
 function isHM(){ return userRole()==="hm"; }
+function isSalesAssistant(){ return userRole()==="sales_assistant"; }
 // รายชื่อ hotelId ที่ผู้ใช้คนนี้ "มีสิทธิ์เห็น" (ผู้จัดการโรงแรม = เฉพาะที่กำหนด · คนอื่น = ทุกโรงแรม)
 function allowedHotelIds(){
   if(CLOUD && isHM()){ const ids = hmHotelsFor(currentEmail())||[]; return ids.filter(id=>hotelById(id)); }
@@ -319,7 +329,7 @@ function roDisabled(){ return readOnly() ? "disabled" : ""; }
 function canEditSales(salesId){
   if(!CLOUD) return true;
   const r = userRole();
-  if(r==="owner"||r==="sales_manager") return true;
+  if(r==="owner"||r==="sales_manager"||r==="sales_assistant") return true;
   if(r==="sales") return mySalesId()===salesId;
   return false;
 }
@@ -365,6 +375,7 @@ function roleBadgeHtml(){
   if(r==="sales_manager") return box("⭐ Sales Manager · จัดการข้อมูลฝั่งกรอก","#fde68a");
   if(r==="finance") return box("🧮 ฝ่ายบัญชี · แก้เฉพาะยอดขาย","#a7f3d0");
   if(r==="sales"){ const nm=salesById(mySalesId())?.name||"เซลล์"; return box("🧑‍💼 ฝ่ายขาย: "+nm+" · แก้เฉพาะของตัวเอง","#bae6fd"); }
+  if(r==="sales_assistant") return box("🤝 ผู้ช่วยฝ่ายขาย · ช่วยทุกเซลล์","#bae6fd");
   if(r==="hm"){ const names=(allowedHotelIds().map(id=>hotelById(id)?.name).filter(Boolean).join(", "))||"—"; return box("🏨 ผจก.โรงแรม · ดูอย่างเดียว: "+names,"#fde68a"); }
   return box("👁 ดูอย่างเดียว","#fde68a");
 }
@@ -442,6 +453,8 @@ const ORDER_NEXT_OWNER = {
   done:    "จบงานแล้ว",
   cancelled:"งานถูกยกเลิก",
 };
+const ORDER_SALE_TYPE = { room:"ห้องพักอย่างเดียว", function:"งานฟังก์ชัน/จัดเลี้ยง", both:"ห้องพัก + ฟังก์ชัน" };
+const ROOM_CATEGORY = { corporate:"Corporate", government:"Government", gro:"G-RO (ห้องพัก)" };
 
 // HOTELS / SALES_REPS now point at the persisted arrays in `db`
 // (populated by normalizeData -> syncLookups), so they can be added,
@@ -795,6 +808,11 @@ function normalizeData(){
     eventName:o.eventName||"", eventType:o.eventType||"", eventDate:o.eventDate||"", eventEndDate:o.eventEndDate||o.eventDate||"",
     pax:Number(o.pax)||0, value:Number(o.value)||0, notes:o.notes||"",
     status:o.status||"order",
+    saleType:o.saleType||"function", roomCategory:o.roomCategory||"gro",
+    roomValue:Number(o.roomValue)||0, functionValue:Number(o.functionValue)||0,
+    stage:o.stage||"won", assistant:o.assistant||"", handedTo:o.handedTo||"",
+    assignLog: Array.isArray(o.assignLog)?o.assignLog:[],
+    saleRefs: Array.isArray(o.saleRefs)?o.saleRefs:[],
     poNo:o.poNo||"", poDate:o.poDate||"", poBy:o.poBy||"",
     boNo:o.boNo||"", boDate:o.boDate||"", boBy:o.boBy||"",
     briefDate:o.briefDate||"", briefTime:o.briefTime||"", briefOwner:o.briefOwner||"",
@@ -901,6 +919,7 @@ async function cloudBootstrap(){
     cloudSnapshot = JSON.parse(JSON.stringify(db));
     // ถ้าเป็นบัญชีฝ่ายขาย ให้เริ่มที่หน้าเซลล์ตัวเองเลย (สะดวกในการแก้ข้อมูลของตัวเอง)
     if(isSales()){ ui.role="sales"; const sid=mySalesId(); if(sid) ui.currentSales=sid; }
+    if(isSalesAssistant()){ ui.role="sales"; }
     if(isSalesManager()){ ui.role="sales"; const sid=mySalesId(); if(sid) ui.currentSales=sid; }
     // ฝ่ายบัญชี เปิดมาที่หน้ากรอกข้อมูลฝ่ายบัญชีเลย
     if(isFinance()){ ui.role="finance"; }
@@ -1198,6 +1217,7 @@ function guardHotelScope(){
 }
 
 function renderTopBar(){
+  const asst=isSalesAssistant();
   return `
   <div class="shadow-lg no-print" style="background:linear-gradient(120deg,#0f3a52 0%,#0f4c66 55%,#12657f 100%);">
     <div class="max-w-7xl mx-auto px-4 py-4 flex flex-wrap items-center justify-between gap-3">
@@ -1216,29 +1236,29 @@ function renderTopBar(){
         <div class="flex items-center gap-1 rounded-full pl-2 pr-1 py-1 backdrop-blur-sm" style="background:rgba(16,185,129,0.16);" title="หน้าสำหรับกรอก/บันทึกข้อมูล">
           <span class="text-xs font-bold px-1" style="color:#a7f3d0;">📝 กรอกข้อมูล</span>
           <button onclick="setRole('sales')" class="tab-pill px-3.5 py-1.5 rounded-full ${ui.role==='sales'?'active':'text-cyan-50'}">ฝ่ายขาย</button>
-          ${isSales() ? "" : `<button onclick="setRole('finance')" class="tab-pill px-3.5 py-1.5 rounded-full ${ui.role==='finance'?'active':'text-cyan-50'}">ฝ่ายบัญชี</button>`}
+          ${(isSales()||asst) ? "" : `<button onclick="setRole('finance')" class="tab-pill px-3.5 py-1.5 rounded-full ${ui.role==='finance'?'active':'text-cyan-50'}">ฝ่ายบัญชี</button>`}
           ${canEditTargets()&&!isSales()?`<button onclick="openHotelTargets()" class="tab-pill px-3.5 py-1.5 rounded-full ${ui.page==='hotelTargets'?'active':'text-cyan-50'}">🎯 Target รายตึก</button>`:""}
         </div>`}
-        <div class="flex items-center gap-1 rounded-full pl-2 pr-1 py-1 backdrop-blur-sm" style="background:rgba(56,189,248,0.16);" title="หน้าแดชบอร์ด/นำเสนอ (ดูผลอย่างเดียว)">
+        ${asst?"":`<div class="flex items-center gap-1 rounded-full pl-2 pr-1 py-1 backdrop-blur-sm" style="background:rgba(56,189,248,0.16);" title="หน้าแดชบอร์ด/นำเสนอ (ดูผลอย่างเดียว)">
           <span class="text-xs font-bold px-1" style="color:#bae6fd;">📊 แดชบอร์ด</span>
           ${isSales() ? "" : `<button onclick="setRole('gm')" class="tab-pill px-3.5 py-1.5 rounded-full ${ui.role==='gm'?'active':'text-cyan-50'}">ผู้บริหาร</button>
           <button onclick="setRole('owner')" class="tab-pill px-3.5 py-1.5 rounded-full ${ui.role==='owner'?'active':'text-cyan-50'}">เจ้าของกิจการ</button>`}
           <button onclick="setRole('present')" class="tab-pill px-3.5 py-1.5 rounded-full ${ui.role==='present'?'active':'text-cyan-50'}">🎤 พรีเซนต์</button>
-        </div>
-        <button onclick="openSalesReport()" title="ดึงรายงานฝ่ายขายรายคน (เลือกช่วงวันที่ · Export Excel/CSV · ส่งอีเมล)"
-                class="btn text-xs px-3 py-1.5 font-semibold ${ui.page==='salesReport'?'bg-white text-cyan-800':'bg-white/20 hover:bg-white/30 text-white'}">📄 รายงานเซลล์</button>
+        </div>`}
+        ${asst?"":`<button onclick="openSalesReport()" title="ดึงรายงานฝ่ายขายรายคน (เลือกช่วงวันที่ · Export Excel/CSV · ส่งอีเมล)"
+                class="btn text-xs px-3 py-1.5 font-semibold ${ui.page==='salesReport'?'bg-white text-cyan-800':'bg-white/20 hover:bg-white/30 text-white'}">📄 รายงานเซลล์</button>`}
         ${canViewFeedback()?`<button onclick="openFeedbackCenter()" title="รวม Feedback หลังใช้บริการและข้อเสนอแนะของฝ่ายขาย"
                 class="btn text-xs px-3 py-1.5 font-semibold ${ui.page==='feedbackCenter'?'bg-white text-cyan-800':'bg-white/20 hover:bg-white/30 text-white'}">💬 Feedback งาน</button>`:""}
-        <button onclick="openEventBoard()" title="ปฏิทินอีเวนต์ทั้งปี · ฝ่ายขายแจ้งงานในโซนให้ผู้จัดการแต่ละตึกทราบ"
-                class="btn text-xs px-3 py-1.5 font-semibold ${ui.page==='eventBoard'?'bg-white text-cyan-800':'bg-white/20 hover:bg-white/30 text-white'}">📅 ปฏิทินอีเวนต์</button>
-        <button onclick="openYieldBoard()" title="แผนการทำราคา/Yield รายตึก · ผู้จัดการแต่ละตึกกรอกเอง ฝ่ายขายดูอย่างเดียว"
-                class="btn text-xs px-3 py-1.5 font-semibold ${ui.page==='yieldBoard'?'bg-white text-cyan-800':'bg-white/20 hover:bg-white/30 text-white'}">💰 แผนราคา/Yield</button>
+        ${asst?"":`<button onclick="openEventBoard()" title="ปฏิทินอีเวนต์ทั้งปี · ฝ่ายขายแจ้งงานในโซนให้ผู้จัดการแต่ละตึกทราบ"
+                class="btn text-xs px-3 py-1.5 font-semibold ${ui.page==='eventBoard'?'bg-white text-cyan-800':'bg-white/20 hover:bg-white/30 text-white'}">📅 ปฏิทินอีเวนต์</button>`}
+        ${asst?"":`<button onclick="openYieldBoard()" title="แผนการทำราคา/Yield รายตึก · ผู้จัดการแต่ละตึกกรอกเอง ฝ่ายขายดูอย่างเดียว"
+                class="btn text-xs px-3 py-1.5 font-semibold ${ui.page==='yieldBoard'?'bg-white text-cyan-800':'bg-white/20 hover:bg-white/30 text-white'}">💰 แผนราคา/Yield</button>`}
         <button onclick="openBanquetOps()" title="งานจัดเลี้ยง: เปิดออเดอร์ → ออก PO → ออก BO/BEO → นัดบรีฟทีม · และใบเสนอราคา"
                 class="btn text-xs px-3 py-1.5 font-semibold ${(ui.page==='banquetOps'||ui.page==='quotePrint'||ui.page==='beoPrint')?'bg-white text-cyan-800':'bg-white/20 hover:bg-white/30 text-white'}">🍽️ งานจัดเลี้ยง/BEO</button>
         ${notifBellHtml()}
         ${CLOUD ? roleBadgeHtml() : ""}
         ${CLOUD ? `<span id="cloudStatus" class="text-xs" style="color:#a7f3d0;">●</span>` : `<span class="text-xs" style="color:#fde68a;" title="กำลังใช้งานแบบออฟไลน์ในเครื่องนี้">ออฟไลน์</span>`}
-        <button onclick="showWeeklySummary()" title="สร้าง/ส่งสรุปยอดขายเดือนปัจจุบันเข้า LINE" class="btn text-xs bg-white/20 hover:bg-white/30 text-white px-3 py-1.5">📤 สรุปรายเดือน</button>
+        ${asst?"":`<button onclick="showWeeklySummary()" title="สร้าง/ส่งสรุปยอดขายเดือนปัจจุบันเข้า LINE" class="btn text-xs bg-white/20 hover:bg-white/30 text-white px-3 py-1.5">📤 สรุปรายเดือน</button>`}
         ${canManageUsers() ? `<button onclick="openUserManager()" title="เพิ่ม/แก้ไข/ลบผู้ใช้ และกำหนดสิทธิ์การใช้งาน (เฉพาะเจ้าของกิจการ)" class="btn text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-1.5">👤 จัดการผู้ใช้</button>` : ""}
         ${canManage() ? `<button onclick="exportData()" title="ดาวน์โหลดข้อมูลสำรองทั้งหมด (เฉพาะเจ้าของ)" class="btn text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-1.5">Export</button>
         <label class="ro-hide btn text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 cursor-pointer">Import
@@ -1427,7 +1447,7 @@ function renderSalesView(){
           <td class="py-2">${feedbackHtml(x,collection)}</td>
           <td class="py-2 text-right whitespace-nowrap">${canEditSales(x.salesId)?`
             <button onclick="openSaleModal('${row.kind}','${x.id}')" class="text-cyan-700 text-xs mr-2">แก้ไข</button>
-            <button onclick="${isFnRecord?"deleteFunction":"deletePipeline"}('${x.id}')" class="text-rose-500 text-xs">ลบ</button>`:`<span class="text-slate-300 text-xs">—</span>`}</td>
+            <button onclick="${isFnRecord?"deleteFunction":"deletePipeline"}('${x.id}')" class="text-rose-500 text-xs">ลบ</button>`:`<span class="text-slate-300 text-xs">—</span>`}${opsCellHtml(isFnRecord?"function":"pipeline", x.id, x.salesId)}</td>
         </tr>`;
       }).join("") || `<tr><td class="py-3 text-slate-400" colspan="9">ยังไม่มีข้อมูลการขาย — กด “＋ เพิ่มการขาย” เพื่อเริ่ม</td></tr>`}
       </tbody>
@@ -3026,6 +3046,7 @@ const ROLE_LABELS = {
   sales_manager:"⭐ Sales Manager · ทุกหน้า ยกเว้นจัดการผู้ใช้",
   finance:"🧮 ฝ่ายบัญชี · แก้เฉพาะยอดขาย/รายได้",
   sales:  "🧑‍💼 ฝ่ายขาย · แก้เฉพาะข้อมูลของตัวเอง",
+  sales_assistant:"🤝 ผู้ช่วยฝ่ายขาย · ช่วยทุกเซลล์ (ออเดอร์/ใบเสนอราคา/ช่วยกรอก)",
   hm:     "🏨 ผจก.โรงแรม · ดูอย่างเดียว (เฉพาะตึกที่กำหนด)",
   viewer: "👁 ดูอย่างเดียว",
 };
@@ -5092,8 +5113,8 @@ function bahtFmt(n){ return Number(n||0).toLocaleString("th-TH",{minimumFraction
 function orderById(id){ return (db.orders||[]).find(o=>o.id===id); }
 function quoteById(id){ return (db.quotations||[]).find(q=>q.id===id); }
 // สิทธิ์: ใครสร้าง/แก้งานจัดเลี้ยงได้ (viewer/hm ทำไม่ได้)
-function boCanCreate(){ if(!CLOUD) return true; const r=userRole(); return ["owner","sales_manager","sales","finance"].includes(r); }
-function canEditOrder(o){ if(!CLOUD) return true; const r=userRole(); if(r==="owner"||r==="sales_manager") return true; if(r==="sales") return mySalesId()===o.salesId; if(r==="finance") return true; return false; }
+function boCanCreate(){ if(!CLOUD) return true; const r=userRole(); return ["owner","sales_manager","sales","sales_assistant","finance"].includes(r); }
+function canEditOrder(o){ if(!CLOUD) return true; const r=userRole(); if(r==="owner"||r==="sales_manager"||r==="sales_assistant") return true; if(r==="sales") return mySalesId()===o.salesId; if(r==="finance") return true; return false; }
 function guardOrder(o){ if(canEditOrder(o)) return true; alert("บัญชีนี้แก้ได้เฉพาะงานของเซลล์ตัวเองเท่านั้น"); return false; }
 function nowUserName(){ const sid=mySalesId(); const rep=sid&&salesById(sid); if(rep) return rep.name; const em=currentEmail(); return em||"ผู้ใช้"; }
 function pad3(n){ return String(n).padStart(3,"0"); }
@@ -5108,15 +5129,25 @@ function beoNoNext(){
 function quoteCodeNext(){ const d=new Date(); const yy=(d.getFullYear()+543); return "QT-"+yy+"-"+pad3((db.quotations||[]).length+1); }
 function pushOrderHistory(o,status){ o.history=o.history||[]; o.history.push({ status, at:nowIso(), by:currentEmail()||nowUserName() }); o.updatedAt=nowIso(); }
 
-function openBanquetOps(){ ui.page="banquetOps"; render(); }
+function openBanquetOps(){ ui.page="banquetOps"; if(!ui.boQueue) ui.boQueue = isSalesAssistant()?"waiting":"all"; render(); }
 function closeBanquetOps(){ ui.page=null; render(); }
 function setBoHotel(v){ ui.boHotel=v; render(); }
 function setBoStatus(v){ ui.boStatus=v; render(); }
 function setBoSearch(v){ ui.boSearch=v; render(); }
+function setBoQueue(v){ ui.boQueue=v; render(); }
+// กลุ่มงานสำหรับผู้ช่วย: รอรับ / งานของฉัน / ส่งต่อ-จบแล้ว
+function orderIsActive(o){ return o.status!=="done" && o.status!=="cancelled"; }
+function orderWaiting(o){ return orderIsActive(o) && !o.assistant && !(o.handedTo&&o.handedTo!==""); }
+function orderMine(o){ return !!o.assistant && o.assistant===nowUserName() && orderIsActive(o); }
+function orderClosed(o){ return o.status==="done" || o.status==="cancelled" || (o.handedTo&&o.handedTo!==""); }
 
 function ordersFiltered(){
   let list=(db.orders||[]).slice();
   if(ui.boHotel && ui.boHotel!=="all") list=list.filter(o=>o.hotelId===ui.boHotel);
+  const qk=ui.boQueue||"all";
+  if(qk==="waiting") list=list.filter(orderWaiting);
+  else if(qk==="mine") list=list.filter(orderMine);
+  else if(qk==="closed") list=list.filter(orderClosed);
   if(ui.boStatus && ui.boStatus!=="all") list=list.filter(o=>o.status===ui.boStatus);
   const q=(ui.boSearch||"").trim().toLowerCase();
   if(q) list=list.filter(o=>((o.customerName||"")+" "+(o.eventName||"")+" "+(o.code||"")).toLowerCase().includes(q));
@@ -5132,6 +5163,18 @@ function renderBanquetOps(){
                  .sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
   // นับตามสถานะ
   const counts={}; ORDER_FLOW.forEach(s=>counts[s]=0); (db.orders||[]).forEach(o=>{ if(counts[o.status]!=null) counts[o.status]++; });
+  // กลุ่มงาน (รอรับ / ของฉัน / ปิดแล้ว) — นับจากงานในโรงแรมที่เลือก
+  const qk=ui.boQueue||"all";
+  const qbase=(db.orders||[]).filter(o=> (!ui.boHotel||ui.boHotel==="all")?true:o.hotelId===ui.boHotel );
+  const cWait=qbase.filter(orderWaiting).length, cMine=qbase.filter(orderMine).length, cClosed=qbase.filter(orderClosed).length;
+  const queueChips = `
+  <div class="card p-3 mb-4 flex flex-wrap items-center gap-2">
+    <span class="text-sm font-bold text-slate-600 mr-1">มุมมองงาน:</span>
+    <button onclick="setBoQueue('all')" class="tab-pill px-3 py-1.5 rounded-full text-xs ${qk==='all'?'active':''}" style="border:1px solid var(--line);">ทั้งหมด (${qbase.length})</button>
+    <button onclick="setBoQueue('waiting')" class="tab-pill px-3 py-1.5 rounded-full text-xs ${qk==='waiting'?'active':''}" style="border:1px solid ${cWait?'#fecaca':'var(--line)'};${cWait?'background:#fef2f2;color:#b91c1c;font-weight:700;':''}">🔔 รอรับ (${cWait})</button>
+    <button onclick="setBoQueue('mine')" class="tab-pill px-3 py-1.5 rounded-full text-xs ${qk==='mine'?'active':''}" style="border:1px solid var(--line);">🙌 งานของฉัน (${cMine})</button>
+    <button onclick="setBoQueue('closed')" class="tab-pill px-3 py-1.5 rounded-full text-xs ${qk==='closed'?'active':''}" style="border:1px solid var(--line);">✔ ส่งต่อ/จบแล้ว (${cClosed})</button>
+  </div>`;
 
   const statusChips = `
     <button onclick="setBoStatus('all')" class="tab-pill px-3 py-1 rounded-full text-xs ${(!ui.boStatus||ui.boStatus==='all')?'active':''}" style="border:1px solid var(--line);">ทั้งหมด (${(db.orders||[]).length})</button>
@@ -5159,6 +5202,7 @@ function renderBanquetOps(){
     </div>
   </div>
   ${flowBar}
+  ${queueChips}
   <div class="card p-3 mb-4 flex flex-wrap items-center gap-2">
     <select onchange="setBoHotel(this.value)" class="btn btn-ghost text-sm px-3 py-1.5">
       <option value="all" ${(!ui.boHotel||ui.boHotel==='all')?'selected':''}>ทุกโรงแรม</option>
@@ -5207,10 +5251,15 @@ function orderRowHtml(o){
   }
   const beoBtn = o.beo ? `<button onclick="openBeoPrint('${o.id}')" class="text-xs text-teal-700 underline ml-2">ดู BEO</button>` : "";
   const nextNote = ORDER_NEXT_OWNER[st]||"";
+  const typeTag = `<span class="badge" style="background:#e2e8f0;color:#475569;font-size:10px;">${ORDER_SALE_TYPE[o.saleType]||"งาน"}</span>`;
+  const waitTag = orderWaiting(o)?`<span class="badge" style="background:#fee2e2;color:#b91c1c;font-size:10px;">🔔 รอรับ</span>`:"";
+  const stageTag = o.stage ? `<span class="badge" style="background:${o.stage==='won'?'#0f766e':'#94a3b8'}1a;color:${o.stage==='won'?'#0f766e':'#64748b'};font-size:10px;">${PIPELINE_STAGES[o.stage]||o.stage}</span>` : "";
+  const asstLine = o.assistant?`<div class="text-[10px] text-violet-500">🤝 รับงาน: ${escHtml(o.assistant)}${o.handedTo?` ↪ ${escHtml(o.handedTo)}`:""}</div>`:"";
+  const acceptBtns = canE?`${!o.assistant?`<button onclick="acceptOrder('${o.id}')" class="text-[11px] text-violet-600 hover:underline">🙌 รับงาน</button>`:""}<button onclick="handoffOrder('${o.id}')" class="text-[11px] text-slate-500 hover:underline">↪ ส่งต่อ</button>`:"";
   return `<tr class="border-b last:border-0 align-top">
     <td class="py-2 px-3 font-mono text-xs text-slate-500">${escHtml(o.code||"-")}${o.beo&&o.beo.beoNo?`<div class="text-[10px] text-amber-600">${escHtml(o.beo.beoNo)}</div>`:""}</td>
     <td class="text-slate-600">${h?escHtml(h.name):"-"}</td>
-    <td><div class="font-medium text-slate-800">${escHtml(o.customerName||"-")}</div><div class="text-xs text-slate-500">${escHtml(o.eventName||"")}</div></td>
+    <td><div class="font-medium text-slate-800">${escHtml(o.customerName||"-")} ${typeTag} ${stageTag} ${waitTag}</div><div class="text-xs text-slate-500">${escHtml(o.eventName||"")}</div>${asstLine}</td>
     <td class="text-slate-600 text-xs">${o.eventDate?shortDateLabel(o.eventDate):"-"}${o.eventEndDate&&o.eventEndDate!==o.eventDate?" – "+shortDateLabel(o.eventEndDate):""}</td>
     <td class="text-right">${o.pax||"-"}</td>
     <td class="text-right">${o.value?fmtMoney(o.value):"-"}</td>
@@ -5220,6 +5269,7 @@ function orderRowHtml(o){
       <div class="flex flex-col items-end gap-1">
         <div class="flex items-center gap-1">${actions}${beoBtn}</div>
         <div class="flex items-center gap-2 text-xs">
+          ${acceptBtns}
           <button onclick="openOrderModal('${o.id}')" class="text-slate-500 hover:text-slate-800">ดู/แก้ไข</button>
           ${canE&&st!=="cancelled"&&st!=="done"?`<button onclick="cancelOrder('${o.id}')" class="text-rose-400 hover:text-rose-600">ยกเลิก</button>`:""}
           ${canE?`<button onclick="deleteOrder('${o.id}')" class="text-rose-300 hover:text-rose-600">ลบ</button>`:""}
@@ -5296,19 +5346,41 @@ function openOrderModal(id){
       <label class="block text-sm">Segment/ประเภท<input id="f_segment" value="${escAttr(ex?ex.segment:"")}" class="${inputCls}" placeholder="เช่น Corporate"/></label>
     </div>
     <div class="grid grid-cols-2 gap-3">
-      <label class="block text-sm">ประเภทงาน<input id="f_etype" value="${escAttr(ex?ex.eventType:"")}" class="${inputCls}" placeholder="เช่น ประชุมสัมมนา + จัดเลี้ยง"/></label>
-      <label class="block text-sm">จำนวนคน (Pax)<input type="number" min="0" id="f_pax" value="${ex&&ex.pax?ex.pax:""}" class="${inputCls}"/></label>
+      <label class="block text-sm">ประเภทการขาย<select id="f_saletype" class="${inputCls}" onchange="toggleOrderSaleType()">${Object.entries(ORDER_SALE_TYPE).map(([k,v])=>`<option value="${k}" ${((ex&&ex.saleType)||"function")===k?"selected":""}>${v}</option>`).join("")}</select></label>
+      <label class="block text-sm">สถานะการขาย (Stage)<select id="f_stage" class="${inputCls}">${Object.entries(PIPELINE_STAGES).map(([k,v])=>`<option value="${k}" ${((ex&&ex.stage)||"won")===k?"selected":""}>${v}</option>`).join("")}</select></label>
     </div>
-    <div class="grid grid-cols-3 gap-3">
-      <label class="block text-sm">วันจัดงาน<input type="date" id="f_date" value="${ex?ex.eventDate:todayStr()}" class="${inputCls}"/></label>
+    <div class="grid grid-cols-2 gap-3">
+      <label class="block text-sm">วันจัดงาน/เข้าพัก<input type="date" id="f_date" value="${ex?ex.eventDate:todayStr()}" class="${inputCls}"/></label>
       <label class="block text-sm">ถึงวันที่<input type="date" id="f_dateend" value="${ex?(ex.eventEndDate||ex.eventDate):todayStr()}" class="${inputCls}"/></label>
-      <label class="block text-sm">มูลค่างาน (บาท)<input type="number" min="0" id="f_value" value="${ex&&ex.value?ex.value:""}" class="${inputCls}"/></label>
     </div>
+    <div id="roomSec" class="rounded-lg p-3" style="background:#eff6ff;">
+      <div class="text-xs font-bold text-sky-800 mb-2">🏨 ส่วนห้องพัก</div>
+      <div class="grid grid-cols-2 gap-3">
+        <label class="block text-sm">หมวดห้องพัก<select id="f_roomcat" class="${inputCls}">${Object.entries(ROOM_CATEGORY).map(([k,v])=>`<option value="${k}" ${((ex&&ex.roomCategory)||"gro")===k?"selected":""}>${v}</option>`).join("")}</select></label>
+        <label class="block text-sm">มูลค่าห้องพัก (บาท)<input type="number" min="0" id="f_roomvalue" value="${ex&&ex.roomValue?ex.roomValue:""}" class="${inputCls}"/></label>
+      </div>
+    </div>
+    <div id="fnSec" class="rounded-lg p-3" style="background:#fffbeb;">
+      <div class="text-xs font-bold text-amber-800 mb-2">🍽️ ส่วนงานฟังก์ชัน/จัดเลี้ยง</div>
+      <div class="grid grid-cols-3 gap-3">
+        <label class="block text-sm">รูปแบบงาน<input id="f_etype" value="${escAttr(ex?ex.eventType:"")}" class="${inputCls}" placeholder="เช่น ประชุมสัมมนา"/></label>
+        <label class="block text-sm">จำนวนคน (Pax)<input type="number" min="0" id="f_pax" value="${ex&&ex.pax?ex.pax:""}" class="${inputCls}"/></label>
+        <label class="block text-sm">มูลค่างานฟังก์ชัน (บาท)<input type="number" min="0" id="f_fnvalue" value="${ex&&ex.functionValue?ex.functionValue:""}" class="${inputCls}"/></label>
+      </div>
+    </div>
+    <div class="text-xs text-slate-500">มูลค่ารวม = ห้องพัก + ฟังก์ชัน · เชื่อมเข้าแดชบอร์ด/On Hand/เป้า อัตโนมัติเมื่อ Stage = Confirmed (ไม่ต้องกรอกซ้ำในหน้าฝ่ายขาย)</div>
     <label class="block text-sm">บันทึกเพิ่มเติม<textarea id="f_notes" rows="2" class="${inputCls}">${ex?escHtml(ex.notes||""):""}</textarea></label>
     ${histHtml}
     <input type="hidden" id="f_id" value="${ex?ex.id:""}"/>`;
   const footer = ex&&canEditOrder(ex)?`<button type="button" onclick="deleteOrder('${ex.id}')" class="text-rose-500 text-xs">ลบออเดอร์</button>`:"";
   document.getElementById("modalRoot").innerHTML = modalShellWide(ex?"แก้ไขออเดอร์งาน":"เปิดออเดอร์งานใหม่", body, "submitOrder", footer, ex?"บันทึก":"เปิดออเดอร์");
+  toggleOrderSaleType();
+}
+function toggleOrderSaleType(){
+  const t=val("f_saletype");
+  const rs=document.getElementById("roomSec"), fs=document.getElementById("fnSec");
+  if(rs) rs.style.display=(t==="room"||t==="both")?"":"none";
+  if(fs) fs.style.display=(t==="function"||t==="both")?"":"none";
 }
 function submitOrder(){
   const id=val("f_id"); const ex=id?orderById(id):null;
@@ -5316,19 +5388,90 @@ function submitOrder(){
   const customer=val("f_customer").trim();
   if(!customer){ alert("กรุณากรอกชื่อลูกค้า/หน่วยงาน"); return; }
   const sid = isSales()? mySalesId() : val("f_sales");
+  const saleType=val("f_saletype")||"function";
+  const roomValue=(saleType==="room"||saleType==="both")?(Number(val("f_roomvalue"))||0):0;
+  const functionValue=(saleType==="function"||saleType==="both")?(Number(val("f_fnvalue"))||0):0;
   const data={ hotelId:val("f_hotel"), salesId:sid, customerName:customer, contactPerson:val("f_contact"),
     phone:val("f_phone"), segment:val("f_segment"), eventName:val("f_event"), eventType:val("f_etype"),
     eventDate:val("f_date"), eventEndDate:val("f_dateend")||val("f_date"), pax:Number(val("f_pax"))||0,
-    value:Number(val("f_value"))||0, notes:val("f_notes") };
-  if(ex){ Object.assign(ex,data); ex.updatedAt=nowIso(); }
+    saleType, roomCategory:val("f_roomcat")||"gro", roomValue, functionValue,
+    value:roomValue+functionValue, stage:val("f_stage")||"won", notes:val("f_notes") };
+  let o;
+  if(ex){ o=ex; Object.assign(ex,data); ex.updatedAt=nowIso(); }
   else{
-    const o={ id:uid("ord"), code:orderCodeNext(), status:"order", poNo:"",poDate:"",poBy:"", boNo:"",boDate:"",boBy:"",
-      briefDate:"",briefTime:"",briefOwner:"",briefRows:[], beo:null, quotationId:"", history:[], createdAt:nowIso(), updatedAt:nowIso(), ...data };
+    o={ id:uid("ord"), code:orderCodeNext(), status:"order", poNo:"",poDate:"",poBy:"", boNo:"",boDate:"",boBy:"",
+      briefDate:"",briefTime:"",briefOwner:"",briefRows:[], beo:null, quotationId:"", assistant:"", handedTo:"", assignLog:[], saleRefs:[], history:[], createdAt:nowIso(), updatedAt:nowIso(), ...data };
     pushOrderHistory(o,"order");
     db.orders.push(o);
   }
+  syncOrderToSales(o);
   saveData(); closeModal(); render();
 }
+// เขียนกลับเข้าการขายเดิม (pipeline/functionEvents) เพื่อให้แดชบอร์ด/On Hand/เป้า อัปเดตโดยไม่กรอกซ้ำ
+function stageToFnStatus(st){ return ({lead:"inquiry",quoted:"quoted",negotiation:"quoted",won:"confirmed",lost:"cancelled"}[st])||"inquiry"; }
+function syncOrderToSales(o){
+  o.saleRefs=Array.isArray(o.saleRefs)?o.saleRefs:[];
+  const wantRoom=(o.saleType==="room"||o.saleType==="both");
+  const wantFn=(o.saleType==="function"||o.saleType==="both");
+  // ---- ห้องพัก → pipeline ----
+  let pref=o.saleRefs.find(r=>r.kind==="pipeline");
+  if(wantRoom){
+    const data={ hotelId:o.hotelId, salesId:o.salesId, accountName:o.customerName, dealType:"corporate_room",
+      salesCategory:o.roomCategory||"gro", eventType:o.eventName||"", serviceStartDate:o.eventDate,
+      serviceEndDate:o.eventEndDate||o.eventDate, estValue:Number(o.roomValue)||0, stage:o.stage||"won",
+      expectedCloseDate:o.eventDate, lostReason:"", customerType:"corporate", orderId:o.id };
+    let rec=pref&&db.pipeline.find(p=>p.id===pref.id);
+    if(rec){ Object.assign(rec,data); }
+    else{ const nid=uid("pl"); db.pipeline.unshift({id:nid,feedbackFiles:[],...data}); o.saleRefs=o.saleRefs.filter(r=>r.kind!=="pipeline"); o.saleRefs.push({kind:"pipeline",id:nid}); }
+  } else if(pref){ db.pipeline=db.pipeline.filter(p=>p.id!==pref.id); o.saleRefs=o.saleRefs.filter(r=>r.kind!=="pipeline"); }
+  // ---- ฟังก์ชัน → functionEvents ----
+  let fref=o.saleRefs.find(r=>r.kind==="function");
+  if(wantFn){
+    const data={ hotelId:o.hotelId, salesId:o.salesId, clientName:o.customerName, eventType:o.eventType||o.eventName||"",
+      eventDate:o.eventDate, eventEndDate:o.eventEndDate||o.eventDate, paxCount:Number(o.pax)||0,
+      estRevenue:Number(o.functionValue)||0, status:stageToFnStatus(o.stage), salesStage:o.stage||"won",
+      expectedCloseDate:o.eventDate, customerType:"corporate", salesCategory:"function", orderId:o.id };
+    let rec=fref&&db.functionEvents.find(x=>x.id===fref.id);
+    if(rec){ Object.assign(rec,data); }
+    else{ const nid=uid("fn"); db.functionEvents.unshift({id:nid,beoSentDate:"",feedbackFiles:[],...data}); o.saleRefs=o.saleRefs.filter(r=>r.kind!=="function"); o.saleRefs.push({kind:"function",id:nid}); }
+  } else if(fref){ db.functionEvents=db.functionEvents.filter(x=>x.id!==fref.id); o.saleRefs=o.saleRefs.filter(r=>r.kind!=="function"); }
+  o.value=(Number(o.roomValue)||0)+(Number(o.functionValue)||0);
+}
+function orderForSaleRecord(refKind,id){ return (db.orders||[]).find(o=>(o.saleRefs||[]).some(r=>r.kind===refKind&&r.id===id)); }
+function openBanquetFromSale(oid){ ui.page="banquetOps"; render(); setTimeout(()=>openOrderModal(oid),30); }
+function openOrderFromSale(refKind,id){
+  let o=orderForSaleRecord(refKind,id);
+  if(o){ openBanquetFromSale(o.id); return; }
+  const rec = refKind==="function"?db.functionEvents.find(f=>f.id===id):db.pipeline.find(p=>p.id===id);
+  if(!rec) return;
+  if(!(canEditSales(rec.salesId)||isSalesAssistant())){ alert("ไม่มีสิทธิ์ดำเนินงานนี้"); return; }
+  const isFn=refKind==="function";
+  o={ id:uid("ord"), code:orderCodeNext(), status:"order",
+    hotelId:rec.hotelId, salesId:rec.salesId,
+    customerName:isFn?rec.clientName:rec.accountName, contactPerson:rec.contactPerson||"", phone:rec.phone||"", segment:"",
+    eventName:isFn?(rec.eventType||rec.clientName):rec.accountName, eventType:isFn?(rec.eventType||""):"",
+    eventDate:isFn?rec.eventDate:rec.serviceStartDate, eventEndDate:isFn?(rec.eventEndDate||rec.eventDate):(rec.serviceEndDate||rec.serviceStartDate),
+    pax:isFn?(rec.paxCount||0):0,
+    saleType:isFn?"function":"room", roomCategory:isFn?"gro":(rec.salesCategory||"gro"),
+    roomValue:isFn?0:(Number(rec.estValue)||0), functionValue:isFn?(Number(rec.estRevenue)||0):0,
+    value:isFn?(Number(rec.estRevenue)||0):(Number(rec.estValue)||0),
+    stage:(isFn?rec.salesStage:rec.stage)||"won",
+    poNo:"",poDate:"",poBy:"", boNo:"",boDate:"",boBy:"", briefDate:"",briefTime:"",briefOwner:"",briefRows:[],
+    beo:null, quotationId:"", assistant:"", handedTo:"", assignLog:[],
+    saleRefs:[{kind:refKind,id:rec.id}], history:[], createdAt:nowIso(), updatedAt:nowIso() };
+  pushOrderHistory(o,"order"); db.orders.push(o); saveData();
+  openBanquetFromSale(o.id);
+}
+function opsCellHtml(refKind,id,salesId){
+  const o=orderForSaleRecord(refKind,id);
+  if(o){ const col=ORDER_STATUS_COLOR[o.status]||"#64748b";
+    return `<div class="mt-1"><span class="badge" style="background:${col}1a;color:${col};font-size:10px;">${ORDER_STATUS[o.status]||o.status}</span> <button onclick="openBanquetFromSale('${o.id}')" class="text-teal-700 text-[11px] underline">ดูงาน</button></div>`; }
+  if(canEditSales(salesId)||isSalesAssistant())
+    return `<div class="mt-1"><button onclick="openOrderFromSale('${refKind}','${id}')" class="text-[11px] text-cyan-700 underline">▶ ดำเนินงาน</button></div>`;
+  return "";
+}
+function acceptOrder(id){ const o=orderById(id); if(!o)return; if(!(isSalesAssistant()||canEditOrder(o))){ alert("ไม่มีสิทธิ์"); return; } o.assistant=nowUserName(); (o.assignLog=o.assignLog||[]).push({action:"รับงาน",by:currentEmail()||nowUserName(),at:nowIso()}); o.updatedAt=nowIso(); saveData(); render(); }
+function handoffOrder(id){ const o=orderById(id); if(!o)return; if(!(isSalesAssistant()||canEditOrder(o))){ alert("ไม่มีสิทธิ์"); return; } const to=prompt("ส่งต่องานให้ใคร? (เช่น ทีมโรงแรม / เซลล์เจ้าของ / ชื่อผู้รับผิดชอบ)", o.handedTo||""); if(to===null) return; o.handedTo=to.trim(); (o.assignLog=o.assignLog||[]).push({action:"ส่งต่อ → "+o.handedTo,by:currentEmail()||nowUserName(),at:nowIso()}); o.updatedAt=nowIso(); saveData(); render(); }
 function deleteOrder(id){ const o=orderById(id); if(!o)return; if(!guardOrder(o))return; if(!confirm("ลบออเดอร์นี้?"))return; db.orders=db.orders.filter(x=>x.id!==id); saveData(); closeModal(); render(); }
 function cancelOrder(id){ const o=orderById(id); if(!o)return; if(!guardOrder(o))return; if(!confirm("ยกเลิกงานนี้?"))return; o.status="cancelled"; pushOrderHistory(o,"cancelled"); saveData(); render(); }
 function markOrderDone(id){ const o=orderById(id); if(!o)return; if(!guardOrder(o))return; o.status="done"; pushOrderHistory(o,"done"); saveData(); render(); }
