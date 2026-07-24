@@ -797,9 +797,44 @@ function defaultData(){
     ],
     years:[ new Date().getFullYear()-2, new Date().getFullYear()-1, new Date().getFullYear() ],
     targets:{},
-    hotelTargets:{},
+    hotelTargets:JSON.parse(JSON.stringify(SEED_HOTEL_TARGETS)),
     salesTargets:{}
   };
+}
+
+// ===== Target ยอดขายรวมทั้งตึก ปี 2026 (จากไฟล์ Budget/Target แต่ละตึก) =====
+// prime : Target 2026-PLAAI Prime Hotel.xlsx            -> GOR รวมทั้งปี
+// play  : Target 2026 PLAAI Play Hotel Rayong.xlsx      -> GOR รวมทั้งปี
+// saroch: Budget 2026 PLAAI Plus Saroj 2025.xlsx        -> SUM (Room+FB+Function+Misc) ทั้งปี
+// bowin : Target Revenue Plaai Plus Hotel,Bowin 2026.xlsx -> SUM (Room+FB+Other) ทั้งปี
+// bowin2: ยังไม่มีไฟล์ Target 2026 -> ตั้งไว้ 0 รอ ผจก. กรอกเพิ่ม
+const SEED_HOTEL_TARGETS = {
+  prime:  { 2026: 39004700 },
+  play:   { 2026: 8185300 },
+  saroch: { 2026: 25775000 },
+  bowin:  { 2026: 35187000 },
+  bowin2: { 2026: 0 }
+};
+// ธงบอกว่ารอบล่าสุด seed ได้ "เติมค่าใหม่จริง" หรือไม่ (ใช้ตัดสินใจ save ขึ้นคลาวด์)
+let SEED_DID_FILL = false;
+// เติมค่า Target 2026 ให้ตึกที่ยังไม่มีค่า (ไม่ทับค่าที่มีอยู่แล้ว/ที่แก้เอง)
+// คืนค่า true ถ้ามีการเติมค่าใหม่ในรอบนี้
+function applySeedTargets2026(){
+  SEED_DID_FILL = false;
+  db.hotelTargets = db.hotelTargets || {};
+  for(const [hid, byYear] of Object.entries(SEED_HOTEL_TARGETS)){
+    const cur = db.hotelTargets[hid] && db.hotelTargets[hid][2026];
+    if(cur==null){
+      db.hotelTargets[hid] = db.hotelTargets[hid] || {};
+      db.hotelTargets[hid][2026] = byYear[2026];
+      SEED_DID_FILL = true;
+    }
+  }
+  if(Array.isArray(db.years) && !db.years.map(Number).includes(2026)){
+    db.years.push(2026); db.years = db.years.map(Number).sort((a,b)=>a-b);
+    SEED_DID_FILL = true;
+  }
+  return SEED_DID_FILL;
 }
 
 
@@ -870,6 +905,7 @@ function normalizeData(){
   // hotels & sales reps are now persisted; fall back to defaults for old saves
   db.hotels = (db.hotels && db.hotels.length) ? db.hotels.map(h=>({ features:{ functionRoom:true, otaOnly:false }, accent:"#0e7490", sub:"", ...h, features:{ functionRoom:true, otaOnly:false, ...(h.features||{}) } })) : DEFAULT_HOTELS.map(h=>({ ...h, features:{ ...h.features } }));
   db.salesReps = (db.salesReps && db.salesReps.length) ? db.salesReps.map(s=>({ actionPlan:"", email:"", ...s })) : DEFAULT_SALES_REPS.map(s=>({ actionPlan:"", email:"", ...s }));
+  applySeedTargets2026();
   syncLookups();
   db.accounts = (db.accounts||[]).map(a=>{
     const status = a.status==="new" ? "opportunity" : (a.status==="dormant" ? "inactive" : (a.status||"active"));
@@ -1085,6 +1121,13 @@ async function cloudBootstrap(){
     if(error) throw error;
     if(rows && rows.length){
       db = rebuildDbFromRows(rows); normalizeData();
+      // Target 2026 เพิ่งถูกเติมอัตโนมัติ และคลาวด์ยังไม่มี -> บันทึกขึ้นคลาวด์ให้เองทันที
+      if(SEED_DID_FILL && !readOnly()){
+        try{
+          await sb.from("records").upsert([{ collection:"meta", id:"app_meta", data:{ years:db.years, targets:db.targets, hotelTargets:db.hotelTargets, salesTargets:db.salesTargets, customerGroups:db.customerGroups }, deleted:false, updated_by:CLIENT_ID, updated_at:new Date().toISOString() }]);
+          setCloudStatus("saved");
+        }catch(e){ console.error("auto-save seed targets failed:", e); }
+      }
     } else {
       db = defaultData(); normalizeData();
       if(!readOnly()) await pushEntireDb();
